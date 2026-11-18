@@ -5,8 +5,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Intent
-import android.content.ClipboardManager
-import android.content.ClipData
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.util.Base64
@@ -16,8 +14,6 @@ import android.os.Message
 import android.webkit.DownloadListener
 import android.webkit.URLUtil
 import android.widget.Toast
-import org.json.JSONArray
-import org.json.JSONObject
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -44,23 +40,19 @@ import kotlin.math.min
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var root: FrameLayout
-    private lateinit var tabsContainer: FrameLayout
-    private data class BrowserTab(val id: Int, val view: WebView)
-    private val tabs = mutableListOf<BrowserTab>()
-    private var nextTabId = 1
     private lateinit var scrim: View
     private lateinit var drawer: LinearLayout
     private val prefs by lazy { getSharedPreferences("omgithub", MODE_PRIVATE) }
     private val homeUrl = "https://omgithub.com"
     private val githubUrl = "https://github.com"
-    private val historyKey = "browser_history"
     private val bookmarksKey = "browser_bookmarks"
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
-    @Volatile private var trustedPageHost: String = ""
+    private var trackingPull = false
+    private var pullStartY = 0f
+    private var pullStartX = 0f
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
-    private var mobileUserAgent = ""
     private val fileChooserRequest = 4107
 
     private val theme: String get() = prefs.getString("theme", "oled") ?: "oled"
@@ -113,20 +105,14 @@ class MainActivity : Activity() {
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
-            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-            settings.offscreenPreRaster = true
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = true
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            mobileUserAgent = settings.userAgentString
-            applyDesktopMode()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            val downloadBridge = DownloadBridge()
-            addJavascriptInterface(downloadBridge, "OmGithubNative")
+            addJavascriptInterface(DownloadBridge(), "OmGithubNative")
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(webView: WebView?, filePathCallback: ValueCallback<Array<Uri>>?, fileChooserParams: FileChooserParams?): Boolean {
                     this@MainActivity.fileChooserCallback?.onReceiveValue(null)
@@ -167,15 +153,9 @@ class MainActivity : Activity() {
                 }
             }
             webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                    super.onPageStarted(view, url, favicon)
-                    trustedPageHost = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("")
-                    downloadBridge.updateHost(url)
-                }
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
-                    rememberHistory(url)
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
@@ -193,11 +173,7 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
-        applyDesktopMode()
-        tabsContainer = FrameLayout(this)
-        tabsContainer.addView(webView, FrameLayout.LayoutParams(-1, -1))
-        tabs.add(BrowserTab(nextTabId++, webView))
-        root.addView(tabsContainer, FrameLayout.LayoutParams(-1, -1))
+        root.addView(webView, FrameLayout.LayoutParams(-1, -1))
 
         scrim = View(this).apply {
             setBackgroundColor(0x99000000.toInt())
@@ -213,19 +189,25 @@ class MainActivity : Activity() {
         root.addView(drawer, drawerParams)
         drawer.translationX = -drawerWidth.toFloat()
 
-        webView.setOnTouchListener { _, event ->
+        webView.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     edgeDownX = event.x
                     edgeDownY = event.y
                     trackingEdgeSwipe = event.x <= dp(28)
+                    trackingPull = (view as WebView).scrollY <= 0
+                    pullStartY = event.y
+                    pullStartX = event.x
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (trackingEdgeSwipe && event.x - edgeDownX > dp(72) &&
-                        kotlin.math.abs(event.y - edgeDownY) < dp(100)) openDrawer()
+                    val dx = event.x - edgeDownX
+                    val dy = event.y - pullStartY
+                    if (trackingEdgeSwipe && dx > dp(72) && kotlin.math.abs(dy) < dp(100)) openDrawer()
+                    else if (trackingPull && dy > dp(110) && dy > kotlin.math.abs(dx) * 1.25f && (view as WebView).scrollY <= 0) webView.reload()
                     trackingEdgeSwipe = false
+                    trackingPull = false
                 }
-                MotionEvent.ACTION_CANCEL -> trackingEdgeSwipe = false
+                MotionEvent.ACTION_CANCEL -> { trackingEdgeSwipe = false; trackingPull = false }
             }
             false
         }
@@ -235,45 +217,50 @@ class MainActivity : Activity() {
     private fun buildDrawer(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(20))
+            setPadding(dp(18), dp(26), dp(18), dp(16))
             setBackgroundColor(pageBackground())
             elevation = dp(18).toFloat()
         }
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        drawerContent(scroll, mainDrawerContent())
+        return panel
+    }
+
+    private fun mainDrawerContent(): LinearLayout {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val brand = TextView(this).apply {
-            text = "◉  OmGithubWeb"
-            textSize = 25f
+        content.addView(TextView(this).apply {
+            text = "OmGithub"; textSize = 24f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(foreground())
-            setPadding(dp(4), dp(10), dp(4), dp(5))
-        }
-        content.addView(brand)
-        content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
-        content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
-        content.addView(navItem("⌘", "GitHub", "Главная GitHub") { navigate(githubUrl) })
-        content.addView(navItem("◉", "Мои репозитории", "Репозитории аккаунта") { navigate("https://github.com/your-repositories") })
-        content.addView(navItem("★", "Звёзды", "Сохранённые репозитории GitHub") { navigate("https://github.com/stars") })
-        content.addView(label("ИНСТРУМЕНТЫ"))
-        content.addView(navItem("☆", "Добавить в избранное", "Сохранить текущую страницу") { addBookmark() })
-        content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
-        content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
-        content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
-        addBrowserTools(content)
-        content.addView(label("ВКЛАДКИ"))
-        content.addView(navItem("▣", "Вкладки (${tabs.size})", "Переключение между страницами") { closeDrawer(); showTabsDialog() })
-        content.addView(navItem("+", "Новая вкладка", "Открыть главную страницу отдельно") { createTab(homeUrl) })
+            setTextColor(foreground()); setPadding(dp(5), dp(10), dp(5), dp(22))
+        })
+        content.addView(label("ПРОСТРАНСТВО"))
+        content.addView(navItem("⌂", "OmGithub", "omgithub.com") { navigate(homeUrl) })
+        content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
+        content.addView(label("БИБЛИОТЕКА"))
+        content.addView(navItem(if (isBookmarked()) "★" else "☆",
+            if (isBookmarked()) "Убрать из избранного" else "Добавить в избранное",
+            "Сохранить открытую страницу") { addBookmark() })
+        content.addView(navItem("★", "Избранное", "${readBookmarks().size} сохранённых страниц") {
+            showBookmarksInDrawer()
+        })
+        content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") {
+            showDownloadsInDrawer()
+        })
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
+        return content
+    }
+
+    private fun drawerContent(scroll: ScrollView, content: View) {
+        scroll.removeAllViews()
         scroll.addView(content)
-        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        return panel
     }
 
     private fun showSettingsInDrawer() {
         val scroll = drawer.getChildAt(0) as? ScrollView ?: return
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(navItem("‹", "Назад", "Главное меню") { showMainDrawerContent() })
+        content.addView(navItem("‹", "Назад", "Главное меню") { drawerContent(scroll, mainDrawerContent()) })
         content.addView(TextView(this).apply {
             text = "Настройки"; textSize = 25f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -281,212 +268,163 @@ class MainActivity : Activity() {
         })
         content.addView(sectionTitle("ВНЕШНИЙ ВИД"))
         content.addView(label("ТЕМА"))
-        content.addView(themeOption("OLED black", "Абсолютно чёрный фон, белые надписи и иконки", "oled"))
+        content.addView(themeOption("OLED black", "Чёрный фон, белые элементы", "oled"))
         content.addView(themeOption("White", "Светлая тема", "white"))
-        content.addView(themeOption("Monet", "Цвета обоев Android 12+", "monet"))
-        if (theme == "oled") {
-            content.addView(label("ЦВЕТ АКЦЕНТА"))
-            content.addView(TextView(this).apply {
-                text = "Белый акцент закреплён для True OLED"
-                textSize = 13f; setTextColor(Color.WHITE)
-                setPadding(dp(5), dp(8), dp(5), dp(12))
-            })
-        } else {
-            content.addView(label("ЦВЕТ АКЦЕНТА"))
-            content.addView(accentPalette())
-        }
-        scroll.removeAllViews(); scroll.addView(content)
+        content.addView(themeOption("Monet", "Цвета Android", "monet"))
+        content.addView(label("ЦВЕТ АКЦЕНТА"))
+        content.addView(accentPalette())
+        drawerContent(scroll, content)
     }
 
-    private fun showMainDrawerContent() {
-        val scroll = drawer.getChildAt(0) as? ScrollView ?: return
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(TextView(this).apply {
-            text = "◉  OmGithub"; textSize = 25f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(foreground()); setPadding(dp(4), dp(10), dp(4), dp(5))
-        })
-        content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
-        content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
-        content.addView(navItem("⌘", "GitHub", "Главная GitHub") { navigate(githubUrl) })
-        content.addView(navItem("◉", "Мои репозитории", "Репозитории аккаунта") { navigate("https://github.com/your-repositories") })
-        content.addView(navItem("★", "Звёзды", "Сохранённые репозитории GitHub") { navigate("https://github.com/stars") })
-        content.addView(label("ИНСТРУМЕНТЫ"))
-        content.addView(navItem("☆", "Добавить в избранное", "Сохранить текущую страницу") { addBookmark() })
-        content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
-        content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
-        content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
-        addBrowserTools(content)
-        content.addView(label("ВКЛАДКИ"))
-        content.addView(navItem("▣", "Вкладки (${tabs.size})", "Переключение между страницами") { closeDrawer(); showTabsDialog() })
-        content.addView(navItem("+", "Новая вкладка", "Открыть главную страницу отдельно") { createTab(homeUrl) })
-        content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
-        content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
-        scroll.removeAllViews(); scroll.addView(content)
+    private fun isBookmarked(): Boolean {
+        val url = webView.url ?: return false
+        return readBookmarks().any { it.optString("url") == url }
     }
 
-    private fun addBrowserTools(content: LinearLayout) {
-        content.addView(label("БРАУЗЕР"))
-        content.addView(navItem("←", "Назад", "Предыдущая страница") {
-            closeDrawer()
-            if (webView.canGoBack()) webView.goBack()
-        })
-        content.addView(navItem("→", "Вперёд", "Следующая страница") {
-            closeDrawer()
-            if (webView.canGoForward()) webView.goForward()
-        })
-        content.addView(navItem("↻", "Обновить", "Перезагрузить страницу") {
-            closeDrawer()
-            webView.reload()
-        })
-        content.addView(navItem("⇧", "Поделиться страницей", "Отправить текущую ссылку") {
-            closeDrawer()
-            shareCurrentPage()
-        })
-        content.addView(navItem("▤", "Копировать ссылку", "Скопировать адрес страницы") {
-            closeDrawer()
-            copyCurrentPage()
-        })
-        val desktop = prefs.getBoolean("desktop_mode", false)
-        content.addView(navItem("▣", if (desktop) "Мобильная версия" else "Версия для ПК",
-            if (desktop) "Вернуться к мобильному сайту" else "Запросить настольный сайт") {
-            prefs.edit().putBoolean("desktop_mode", !prefs.getBoolean("desktop_mode", false)).apply()
-            applyDesktopMode()
-            closeDrawer()
-            webView.reload()
-            Toast.makeText(this, if (prefs.getBoolean("desktop_mode", false)) "Режим ПК включён" else "Мобильный режим включён", Toast.LENGTH_SHORT).show()
-        })
+    private fun readBookmarks(): MutableList<JSONObject> {
+        return runCatching {
+            val array = JSONArray(prefs.getString(bookmarksKey, "[]") ?: "[]")
+            MutableList(array.length()) { array.getJSONObject(it) }
+        }.getOrDefault(mutableListOf())
     }
 
-    private fun applyDesktopMode() {
-        if (!::webView.isInitialized || mobileUserAgent.isBlank()) return
-        webView.settings.userAgentString = if (prefs.getBoolean("desktop_mode", false)) {
-            mobileUserAgent.replace(Regex("Android [^;)]+;\\s*"), "")
-                .replace("Mobile", "")
-                .replace("Linux;", "X11; Linux x86_64;")
-        } else mobileUserAgent
+    private fun saveBookmarks(items: List<JSONObject>) {
+        val array = JSONArray()
+        items.forEach { array.put(it) }
+        prefs.edit().putString(bookmarksKey, array.toString()).apply()
     }
 
-    private fun shareCurrentPage() {
-        val url = webView.url ?: return
-        val title = webView.title?.takeIf { it.isNotBlank() } ?: url
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, title)
-            putExtra(Intent.EXTRA_TEXT, "$title\n$url")
-        }, "Поделиться страницей"))
-    }
-
-    private fun copyCurrentPage() {
-        val url = webView.url ?: return
-        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка", url))
-        Toast.makeText(this, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun createTab(url: String = homeUrl) {
-        val bridge = DownloadBridge()
-        val page = WebView(this).apply {
-            setBackgroundColor(if (isDark()) Color.BLACK else Color.WHITE)
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = true
-            settings.loadsImagesAutomatically = true
-            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-            settings.offscreenPreRaster = true
-            settings.javaScriptCanOpenWindowsAutomatically = true
-            settings.setSupportMultipleWindows(false)
-            settings.allowFileAccess = false
-            settings.allowContentAccess = true
-            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) settings.forceDark =
-                if (isDark()) android.webkit.WebSettings.FORCE_DARK_ON else android.webkit.WebSettings.FORCE_DARK_OFF
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            addJavascriptInterface(bridge, "OmGithubNative")
-            webChromeClient = object : WebChromeClient() {
-                override fun onShowFileChooser(v: WebView?, callback: ValueCallback<Array<Uri>>?, params: FileChooserParams?): Boolean {
-                    fileChooserCallback?.onReceiveValue(null)
-                    fileChooserCallback = callback
-                    return try {
-                        val intent = params?.createIntent() ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
-                        }
-                        intent.addCategory(Intent.CATEGORY_OPENABLE)
-                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params?.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
-                        startActivityForResult(intent, fileChooserRequest)
-                        true
-                    } catch (_: Exception) {
-                        fileChooserCallback?.onReceiveValue(null)
-                        fileChooserCallback = null
-                        false
-                    }
-                }
-            }
-            webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
-                    bridge.updateHost(pageUrl)
-                }
-                override fun onPageFinished(view: WebView, pageUrl: String) {
-                    view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
-                    rememberHistory(pageUrl)
-                }
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val uri = request.url
-                    if (uri.scheme == "http" || uri.scheme == "https") return false
-                    openExternalLink(uri)
-                    return true
-                }
-            }
-            setDownloadListener(DownloadListener { downloadUrl, userAgent, disposition, mime, _ ->
-                enqueueDownload(downloadUrl, userAgent, disposition, mime)
-            })
-        }
-        tabs.add(BrowserTab(nextTabId++, page))
-        tabsContainer.addView(page, FrameLayout.LayoutParams(-1, -1))
-        webView.visibility = View.GONE
-        webView = page
-        mobileUserAgent = page.settings.userAgentString
-        applyDesktopMode()
-        page.loadUrl(url)
-        closeDrawer()
-        Toast.makeText(this, "Новая вкладка (${tabs.size})", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showTabsDialog() {
-        val labels = tabs.mapIndexed { index, tab ->
-            val title = tab.view.title?.takeIf { it.isNotBlank() }
-                ?: tab.view.url?.let { Uri.parse(it).host } ?: "Новая вкладка"
-            "${index + 1}. $title"
-        }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("Открытые вкладки (${tabs.size})")
-            .setItems(labels) { _, which -> switchTab(which) }
-            .setPositiveButton("+ Новая вкладка") { _, _ -> createTab(homeUrl) }
-            .setNegativeButton("Закрыть текущую") { _, _ -> closeCurrentTab() }
-            .show()
-    }
-
-    private fun switchTab(index: Int) {
-        if (index !in tabs.indices) return
-        tabs.forEach { it.view.visibility = View.GONE }
-        webView = tabs[index].view
-        webView.visibility = View.VISIBLE
-        mobileUserAgent = webView.settings.userAgentString
-        closeDrawer()
-    }
-
-    private fun closeCurrentTab() {
-        if (tabs.size <= 1) {
-            webView.loadUrl(homeUrl)
+    private fun addBookmark() {
+        val url = webView.url
+        if (url.isNullOrBlank()) {
+            Toast.makeText(this, "Сначала откройте страницу", Toast.LENGTH_SHORT).show()
             return
         }
-        val index = tabs.indexOfFirst { it.view === webView }.coerceAtLeast(0)
-        val removed = tabs.removeAt(index)
-        removed.view.stopLoading()
-        tabsContainer.removeView(removed.view)
-        removed.view.destroy()
-        switchTab((index - 1).coerceAtLeast(0))
+        val items = readBookmarks()
+        if (items.removeAll { it.optString("url") == url }) {
+            saveBookmarks(items)
+            Toast.makeText(this, "Удалено из избранного", Toast.LENGTH_SHORT).show()
+        } else {
+            val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
+            items.add(0, JSONObject().put("title", title).put("url", url))
+            saveBookmarks(items)
+            Toast.makeText(this, "Добавлено в избранное", Toast.LENGTH_SHORT).show()
+        }
+        val scroll = drawer.getChildAt(0) as? ScrollView
+        if (scroll != null) drawerContent(scroll, mainDrawerContent())
+    }
+
+    private fun showBookmarksInDrawer() {
+        val scroll = drawer.getChildAt(0) as? ScrollView ?: return
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(navItem("‹", "Назад", "Главное меню") { drawerContent(scroll, mainDrawerContent()) })
+        content.addView(TextView(this).apply {
+            text = "Избранное"; textSize = 25f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
+        })
+        val items = readBookmarks()
+        if (items.isEmpty()) content.addView(TextView(this).apply {
+            text = "Здесь будут сохранённые страницы. Добавляйте их через пункт «Добавить в избранное»."
+            textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
+        })
+        items.forEach { item ->
+            val url = item.optString("url")
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(navItem("★", item.optString("title", url), Uri.parse(url).host ?: url) {
+                closeDrawer(); webView.loadUrl(url)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(TextView(this).apply {
+                text = "×"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(muted())
+                setOnClickListener {
+                    val updated = readBookmarks()
+                    updated.removeAll { it.optString("url") == url }
+                    saveBookmarks(updated)
+                    showBookmarksInDrawer()
+                }
+            }, LinearLayout.LayoutParams(dp(40), dp(54)))
+            content.addView(row)
+        }
+        if (items.isNotEmpty()) content.addView(navItem("⌫", "Очистить избранное", "Удалить все сохранённые страницы") {
+            saveBookmarks(emptyList()); showBookmarksInDrawer()
+        })
+        drawerContent(scroll, content)
+    }
+
+    private fun showDownloadsInDrawer() {
+        val scroll = drawer.getChildAt(0) as? ScrollView ?: return
+        val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+        val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
+            DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or
+                DownloadManager.STATUS_PAUSED or DownloadManager.STATUS_SUCCESSFUL or DownloadManager.STATUS_FAILED
+        ))
+        data class DownloadEntry(val id: Long, val title: String, val status: Int, val progress: String)
+        val entries = mutableListOf<DownloadEntry>()
+        cursor?.use {
+            val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
+            val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val doneCol = it.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+            val totalCol = it.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+            while (it.moveToNext()) {
+                val status = it.getInt(statusCol)
+                val done = if (doneCol >= 0) it.getLong(doneCol) else 0L
+                val total = if (totalCol >= 0) it.getLong(totalCol) else -1L
+                val progress = if (total > 0) "${((done * 100) / total).coerceIn(0, 100)}%" else ""
+                entries.add(DownloadEntry(it.getLong(idCol), it.getString(titleCol) ?: "Файл", status, progress))
+            }
+        }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(navItem("‹", "Назад", "Главное меню") { drawerContent(scroll, mainDrawerContent()) })
+        content.addView(TextView(this).apply {
+            text = "Скачанные файлы"; textSize = 25f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
+        })
+        if (entries.isEmpty()) content.addView(TextView(this).apply {
+            text = "Пока нет загрузок. Скачанные файлы появятся здесь."
+            textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
+        })
+        entries.forEach { entry ->
+            val statusText = when (entry.status) {
+                DownloadManager.STATUS_SUCCESSFUL -> "Готово · нажмите, чтобы открыть"
+                DownloadManager.STATUS_FAILED -> "Ошибка загрузки"
+                DownloadManager.STATUS_PAUSED -> "Приостановлено"
+                else -> "Загрузка · ${entry.progress}"
+            }
+            content.addView(navItem(if (entry.status == DownloadManager.STATUS_SUCCESSFUL) "✓" else "↓",
+                entry.title, statusText) {
+                val uri = manager.getUriForDownloadedFile(entry.id)
+                if (uri != null) {
+                    val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    } catch (_: Exception) {
+                        Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
+                    }
+                } else Toast.makeText(this, "Файл ещё не готов", Toast.LENGTH_SHORT).show()
+            }.apply {
+                setOnLongClickListener {
+                    AlertDialog.Builder(this@MainActivity).setItems(arrayOf("Поделиться", "Удалить")) { _, which ->
+                        if (which == 0) {
+                            val uri = manager.getUriForDownloadedFile(entry.id)
+                            if (uri != null) {
+                                val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
+                                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
+                                    .putExtra(Intent.EXTRA_STREAM, uri)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Поделиться файлом"))
+                            }
+                        } else {
+                            manager.remove(entry.id)
+                            showDownloadsInDrawer()
+                        }
+                    }.show()
+                    true
+                }
+            })
+        }
+        drawerContent(scroll, content)
     }
 
     private fun label(value: String) = TextView(this).apply {
@@ -511,26 +449,28 @@ class MainActivity : Activity() {
         val item = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(12), dp(12), dp(12))
-            setBackgroundColor(if (theme == "oled") Color.BLACK else if (title == "Главная") accent.withAlpha(34) else surface())
+            setPadding(dp(8), dp(5), dp(8), dp(5))
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            isFocusable = true
             setOnClickListener { action() }
         }
         val symbol = TextView(this).apply {
             text = icon
-            textSize = 23f
+            textSize = 21f
             setTextColor(accent)
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
         }
         val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0) }
         texts.addView(TextView(this).apply {
-            text = title; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(foreground())
+            text = title; textSize = 14f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setTextColor(foreground())
         })
-        texts.addView(TextView(this).apply { text = subtitle; textSize = 12f; setTextColor(muted()) })
+        texts.addView(TextView(this).apply { text = subtitle; textSize = 11f; setTextColor(muted()) })
         item.addView(symbol)
         item.addView(texts)
-        val lp = LinearLayout.LayoutParams(-1, dp(64))
-        lp.bottomMargin = dp(7)
+        val lp = LinearLayout.LayoutParams(-1, dp(54))
+        lp.bottomMargin = dp(1)
         item.layoutParams = lp
         return item
     }
@@ -626,7 +566,7 @@ class MainActivity : Activity() {
             if (!cookies.isNullOrBlank()) request.addRequestHeader("Cookie", cookies)
             if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
             request.setTitle(fileName)
-            request.setDescription("Загрузка из OmGithubWeb")
+            request.setDescription("Загрузка из OmGithub")
             request.setMimeType(mimeType ?: "application/octet-stream")
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
@@ -638,19 +578,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun isTrustedWebHost(): Boolean {
-        val host = trustedPageHost
-        return host == "omgithub.com" || host.endsWith(".omgithub.com") ||
-            host == "github.com" || host.endsWith(".github.com")
-    }
-
     private inner class DownloadBridge {
-        @Volatile private var trustedHost = ""
-        fun updateHost(url: String) { trustedHost = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("") }
         @JavascriptInterface
         fun saveBlob(base64: String, fileName: String, mimeType: String) {
-            val host = trustedHost
-            if (!(host == "omgithub.com" || host.endsWith(".omgithub.com") || host == "github.com" || host.endsWith(".github.com"))) return
             Thread {
                 try {
                     val bytes = Base64.decode(base64, Base64.DEFAULT)
@@ -681,139 +611,7 @@ class MainActivity : Activity() {
         } else null
         callback.onReceiveValue(results)
     }
-    private fun rememberHistory(url: String) {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) return
-        val items = readSavedItems(historyKey)
-        items.removeAll { it.optString("url") == url }
-        val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
-        items.add(0, JSONObject().put("title", title).put("url", url))
-        while (items.size > 60) items.removeAt(items.lastIndex)
-        writeSavedItems(historyKey, items)
-    }
-
-    private fun addBookmark() {
-        val url = webView.url ?: run {
-            Toast.makeText(this, "Страница ещё не загружена", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
-        val items = readSavedItems(bookmarksKey)
-        if (items.any { it.optString("url") == url }) {
-            Toast.makeText(this, "Уже есть в избранном", Toast.LENGTH_SHORT).show()
-            return
-        }
-        items.add(0, JSONObject().put("title", title).put("url", url))
-        writeSavedItems(bookmarksKey, items)
-        closeDrawer()
-        Toast.makeText(this, "Добавлено в избранное", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun readSavedItems(key: String): MutableList<JSONObject> {
-        val raw = prefs.getString(key, "[]") ?: "[]"
-        return runCatching {
-            val array = JSONArray(raw)
-            MutableList(array.length()) { index -> array.getJSONObject(index) }
-        }.getOrDefault(mutableListOf())
-    }
-
-    private fun writeSavedItems(key: String, items: List<JSONObject>) {
-        val array = JSONArray()
-        items.forEach { array.put(it) }
-        prefs.edit().putString(key, array.toString()).apply()
-    }
-
-    private fun showSavedPages(key: String, title: String) {
-        val items = readSavedItems(key)
-        if (items.isEmpty()) {
-            AlertDialog.Builder(this).setTitle(title)
-                .setMessage(if (key == bookmarksKey) "Сохраняй страницы через «Добавить в избранное» в боковом меню." else "Здесь появятся недавно открытые страницы.")
-                .setPositiveButton("Понятно", null).show()
-            return
-        }
-        val labels = items.map { it.optString("title", it.optString("url")) }.toTypedArray()
-        AlertDialog.Builder(this).setTitle(title).setItems(labels) { _, index ->
-            navigate(items[index].optString("url"))
-        }.setNeutralButton("Очистить") { _, _ ->
-            writeSavedItems(key, emptyList())
-            Toast.makeText(this, "$title очищено", Toast.LENGTH_SHORT).show()
-        }.setNegativeButton("Закрыть", null).show()
-    }
-
-    private fun showDownloads() {
-        val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
-            DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or
-                DownloadManager.STATUS_PAUSED or DownloadManager.STATUS_SUCCESSFUL or
-                DownloadManager.STATUS_FAILED
-        ))
-        val ids = mutableListOf<Long>()
-        val titles = mutableListOf<String>()
-        cursor?.use {
-            val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
-            val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
-            val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            val downloadedCol = it.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            val totalCol = it.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-            while (it.moveToNext()) {
-                val id = it.getLong(idCol)
-                val status = it.getInt(statusCol)
-                val title = it.getString(titleCol) ?: "Файл"
-                val downloaded = if (downloadedCol >= 0) it.getLong(downloadedCol) else 0L
-                val total = if (totalCol >= 0) it.getLong(totalCol) else -1L
-                val progress = if (total > 0) " — ${((downloaded * 100) / total).coerceIn(0, 100)}%" else ""
-                ids.add(id)
-                titles.add(when (status) {
-                    DownloadManager.STATUS_SUCCESSFUL -> "✓  $title"
-                    DownloadManager.STATUS_FAILED -> "✕  $title — ошибка"
-                    DownloadManager.STATUS_PAUSED -> "Ⅱ  $title — пауза$progress"
-                    else -> "↓  $title — загружается$progress"
-                })
-            }
-        }
-        if (titles.isEmpty()) {
-            AlertDialog.Builder(this)
-                .setTitle("Скачанные файлы")
-                .setMessage("Здесь пока пусто. Скачанные файлы будут появляться в этом списке.")
-                .setPositiveButton("Понятно", null)
-                .show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Скачанные файлы")
-            .setItems(titles.toTypedArray()) { _, which ->
-                val id = ids[which]
-                val fileUri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
-                val mime = runCatching { manager.getMimeTypeForDownloadedFile(id) }.getOrNull() ?: "*/*"
-                val actions = if (fileUri != null) arrayOf("Открыть", "Поделиться", "Удалить загрузку")
-                    else arrayOf("Удалить загрузку", "Закрыть")
-                AlertDialog.Builder(this)
-                    .setTitle(titles[which].substringBefore(" — "))
-                    .setItems(actions) { _, action ->
-                        when (actions[action]) {
-                            "Открыть" -> try {
-                                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(fileUri, mime)
-                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                            } catch (_: Exception) {
-                                Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
-                            }
-                            "Поделиться" -> try {
-                                val share = Intent(Intent.ACTION_SEND).setType(mime)
-                                    .putExtra(Intent.EXTRA_STREAM, fileUri)
-                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                startActivity(Intent.createChooser(share, "Поделиться файлом"))
-                            } catch (_: Exception) {
-                                Toast.makeText(this, "Не удалось поделиться файлом", Toast.LENGTH_LONG).show()
-                            }
-                            "Удалить загрузку" -> {
-                                manager.remove(id)
-                                Toast.makeText(this, "Загрузка удалена", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }.setNegativeButton("Назад", null).show()
-            }
-            .setPositiveButton("Закрыть", null)
-            .show()
-    }
+    private fun showDownloads() = showDownloadsInDrawer()
 
     private fun systemColor(name: String, fallback: Int): Int {
         if (Build.VERSION.SDK_INT < 31) return fallback
@@ -842,7 +640,6 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         if (drawer.translationX == 0f) closeDrawer()
         else if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
-        else if (tabs.size > 1) closeCurrentTab()
         else super.onBackPressed()
     }
 
@@ -853,8 +650,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         if (::webView.isInitialized) {
-            tabs.forEach { it.view.stopLoading(); it.view.destroy() }
-            tabs.clear()
+            webView.stopLoading()
+            webView.destroy()
         }
         super.onDestroy()
     }
