@@ -101,11 +101,14 @@ class MainActivity : Activity() {
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
+            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            settings.offscreenPreRaster = true
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = true
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             addJavascriptInterface(DownloadBridge(), "OmGithubNative")
@@ -214,7 +217,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val brand = TextView(this).apply {
-            text = "◉  OmGithub"
+            text = "◉  OmGithubWeb"
             textSize = 25f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(foreground())
@@ -414,7 +417,7 @@ class MainActivity : Activity() {
             if (!cookies.isNullOrBlank()) request.addRequestHeader("Cookie", cookies)
             if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
             request.setTitle(fileName)
-            request.setDescription("Загрузка из OmGithub")
+            request.setDescription("Загрузка из OmGithubWeb")
             request.setMimeType(mimeType ?: "application/octet-stream")
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
