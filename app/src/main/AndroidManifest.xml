@@ -4,8 +4,8 @@
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:label="OmGithubWeb"
-        android:icon="@drawable/ic_octocat"
-        android:roundIcon="@drawable/ic_octocat"
+        android:icon="@drawable/ic_omgithub"
+        android:roundIcon="@drawable/ic_omgithub"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity
