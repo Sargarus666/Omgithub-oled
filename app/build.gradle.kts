@@ -1,3 +1,7 @@
+dependencies {
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
