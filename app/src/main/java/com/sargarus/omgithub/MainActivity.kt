@@ -180,7 +180,7 @@ class MainActivity : Activity() {
             setProgressBackgroundColorSchemeColor(surface())
             setOnRefreshListener { webView.reload() }
         }
-        swipeRefresh.addView(webView, SwipeRefreshLayout.LayoutParams(-1, -1))
+        swipeRefresh.addView(webView, -1, -1)
         root.addView(swipeRefresh, FrameLayout.LayoutParams(-1, -1))
 
         scrim = View(this).apply {
