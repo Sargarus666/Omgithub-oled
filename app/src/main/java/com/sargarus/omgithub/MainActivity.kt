@@ -44,6 +44,10 @@ import kotlin.math.min
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var root: FrameLayout
+    private lateinit var tabsContainer: FrameLayout
+    private data class BrowserTab(val id: Int, val view: WebView)
+    private val tabs = mutableListOf<BrowserTab>()
+    private var nextTabId = 1
     private lateinit var scrim: View
     private lateinit var drawer: LinearLayout
     private val prefs by lazy { getSharedPreferences("omgithub", MODE_PRIVATE) }
@@ -121,7 +125,8 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            addJavascriptInterface(DownloadBridge(), "OmGithubNative")
+            val downloadBridge = DownloadBridge()
+            addJavascriptInterface(downloadBridge, "OmGithubNative")
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(webView: WebView?, filePathCallback: ValueCallback<Array<Uri>>?, fileChooserParams: FileChooserParams?): Boolean {
                     this@MainActivity.fileChooserCallback?.onReceiveValue(null)
@@ -165,6 +170,7 @@ class MainActivity : Activity() {
                 override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     trustedPageHost = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("")
+                    downloadBridge.updateHost(url)
                 }
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
@@ -188,7 +194,10 @@ class MainActivity : Activity() {
             }
         }
         applyDesktopMode()
-        root.addView(webView, FrameLayout.LayoutParams(-1, -1))
+        tabsContainer = FrameLayout(this)
+        tabsContainer.addView(webView, FrameLayout.LayoutParams(-1, -1))
+        tabs.add(BrowserTab(nextTabId++, webView))
+        root.addView(tabsContainer, FrameLayout.LayoutParams(-1, -1))
 
         scrim = View(this).apply {
             setBackgroundColor(0x99000000.toInt())
@@ -251,6 +260,9 @@ class MainActivity : Activity() {
         content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
         addBrowserTools(content)
+        content.addView(label("ВКЛАДКИ"))
+        content.addView(navItem("▣", "Вкладки (${tabs.size})", "Переключение между страницами") { closeDrawer(); showTabsDialog() })
+        content.addView(navItem("+", "Новая вкладка", "Открыть главную страницу отдельно") { createTab(homeUrl) })
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
         scroll.addView(content)
@@ -367,6 +379,111 @@ class MainActivity : Activity() {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка", url))
         Toast.makeText(this, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun createTab(url: String = homeUrl) {
+        val bridge = DownloadBridge()
+        val page = WebView(this).apply {
+            setBackgroundColor(if (isDark()) Color.BLACK else Color.WHITE)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.loadsImagesAutomatically = true
+            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            settings.offscreenPreRaster = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(false)
+            settings.allowFileAccess = false
+            settings.allowContentAccess = true
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) settings.forceDark =
+                if (isDark()) android.webkit.WebSettings.FORCE_DARK_ON else android.webkit.WebSettings.FORCE_DARK_OFF
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            addJavascriptInterface(bridge, "OmGithubNative")
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(v: WebView?, callback: ValueCallback<Array<Uri>>?, params: FileChooserParams?): Boolean {
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = callback
+                    return try {
+                        val intent = params?.createIntent() ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+                        }
+                        intent.addCategory(Intent.CATEGORY_OPENABLE)
+                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params?.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+                        startActivityForResult(intent, fileChooserRequest)
+                        true
+                    } catch (_: Exception) {
+                        fileChooserCallback?.onReceiveValue(null)
+                        fileChooserCallback = null
+                        false
+                    }
+                }
+            }
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
+                    bridge.updateHost(pageUrl)
+                }
+                override fun onPageFinished(view: WebView, pageUrl: String) {
+                    view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
+                    rememberHistory(pageUrl)
+                }
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val uri = request.url
+                    if (uri.scheme == "http" || uri.scheme == "https") return false
+                    openExternalLink(uri)
+                    return true
+                }
+            }
+            setDownloadListener(DownloadListener { downloadUrl, userAgent, disposition, mime ->
+                enqueueDownload(downloadUrl, userAgent, disposition, mime)
+            })
+        }
+        tabs.add(BrowserTab(nextTabId++, page))
+        tabsContainer.addView(page, FrameLayout.LayoutParams(-1, -1))
+        webView.visibility = View.GONE
+        webView = page
+        mobileUserAgent = page.settings.userAgentString
+        applyDesktopMode()
+        page.loadUrl(url)
+        closeDrawer()
+        Toast.makeText(this, "Новая вкладка (\${tabs.size})", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showTabsDialog() {
+        val labels = tabs.mapIndexed { index, tab ->
+            val title = tab.view.title?.takeIf { it.isNotBlank() }
+                ?: tab.view.url?.let { Uri.parse(it).host } ?: "Новая вкладка"
+            "\${index + 1}. $title"
+        }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("Открытые вкладки (\${tabs.size})")
+            .setItems(labels) { _, which -> switchTab(which) }
+            .setPositiveButton("+ Новая вкладка") { _, _ -> createTab(homeUrl) }
+            .setNegativeButton("Закрыть текущую") { _, _ -> closeCurrentTab() }
+            .show()
+    }
+
+    private fun switchTab(index: Int) {
+        if (index !in tabs.indices) return
+        tabs.forEach { it.view.visibility = View.GONE }
+        webView = tabs[index].view
+        webView.visibility = View.VISIBLE
+        mobileUserAgent = webView.settings.userAgentString
+        closeDrawer()
+    }
+
+    private fun closeCurrentTab() {
+        if (tabs.size <= 1) {
+            webView.loadUrl(homeUrl)
+            return
+        }
+        val index = tabs.indexOfFirst { it.view === webView }.coerceAtLeast(0)
+        val removed = tabs.removeAt(index)
+        removed.view.stopLoading()
+        tabsContainer.removeView(removed.view)
+        removed.view.destroy()
+        switchTab((index - 1).coerceAtLeast(0))
     }
 
     private fun label(value: String) = TextView(this).apply {
@@ -525,9 +642,12 @@ class MainActivity : Activity() {
     }
 
     private inner class DownloadBridge {
+        @Volatile private var trustedHost = ""
+        fun updateHost(url: String) { trustedHost = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("") }
         @JavascriptInterface
         fun saveBlob(base64: String, fileName: String, mimeType: String) {
-            if (!isTrustedWebHost()) return
+            val host = trustedHost
+            if (!(host == "omgithub.com" || host.endsWith(".omgithub.com") || host == "github.com" || host.endsWith(".github.com"))) return
             Thread {
                 try {
                     val bytes = Base64.decode(base64, Base64.DEFAULT)
@@ -719,6 +839,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         if (drawer.translationX == 0f) closeDrawer()
         else if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
+        else if (tabs.size > 1) closeCurrentTab()
         else super.onBackPressed()
     }
 
@@ -729,8 +850,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         if (::webView.isInitialized) {
-            webView.stopLoading()
-            webView.destroy()
+            tabs.forEach { it.view.stopLoading(); it.view.destroy() }
+            tabs.clear()
         }
         super.onDestroy()
     }
