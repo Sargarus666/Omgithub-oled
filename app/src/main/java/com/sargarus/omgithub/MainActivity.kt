@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
+    @Volatile private var trustedPageHost: String = ""
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserRequest = 4107
 
@@ -156,6 +157,10 @@ class MainActivity : Activity() {
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    trustedPageHost = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("")
+                }
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
@@ -447,7 +452,7 @@ class MainActivity : Activity() {
     }
 
     private fun isTrustedWebHost(): Boolean {
-        val host = runCatching { Uri.parse(webView.url ?: "").host?.lowercase().orEmpty() }.getOrDefault("")
+        val host = trustedPageHost
         return host == "omgithub.com" || host.endsWith(".omgithub.com") ||
             host == "github.com" || host.endsWith(".github.com")
     }
@@ -557,16 +562,21 @@ class MainActivity : Activity() {
             val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
             val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
             val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val downloadedCol = it.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+            val totalCol = it.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
             while (it.moveToNext()) {
                 val id = it.getLong(idCol)
                 val status = it.getInt(statusCol)
                 val title = it.getString(titleCol) ?: "Файл"
+                val downloaded = if (downloadedCol >= 0) it.getLong(downloadedCol) else 0L
+                val total = if (totalCol >= 0) it.getLong(totalCol) else -1L
+                val progress = if (total > 0) " — ${((downloaded * 100) / total).coerceIn(0, 100)}%" else ""
                 ids.add(id)
                 titles.add(when (status) {
                     DownloadManager.STATUS_SUCCESSFUL -> "✓  $title"
                     DownloadManager.STATUS_FAILED -> "✕  $title — ошибка"
-                    DownloadManager.STATUS_PAUSED -> "Ⅱ  $title — пауза"
-                    else -> "↓  $title — загружается"
+                    DownloadManager.STATUS_PAUSED -> "Ⅱ  $title — пауза$progress"
+                    else -> "↓  $title — загружается$progress"
                 })
             }
         }
@@ -582,18 +592,34 @@ class MainActivity : Activity() {
             .setTitle("Скачанные файлы")
             .setItems(titles.toTypedArray()) { _, which ->
                 val id = ids[which]
-                try {
-                    val fileUri = manager.getUriForDownloadedFile(id)
-                    if (fileUri == null) {
-                        Toast.makeText(this, "Файл ещё не готов или загрузка завершилась ошибкой", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
-                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(fileUri, mime)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                    }
-                } catch (_: Exception) {
-                    Toast.makeText(this, "Не найдено приложение для открытия этого файла", Toast.LENGTH_LONG).show()
-                }
+                val fileUri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
+                val mime = runCatching { manager.getMimeTypeForDownloadedFile(id) }.getOrNull() ?: "*/*"
+                val actions = if (fileUri != null) arrayOf("Открыть", "Поделиться", "Удалить загрузку")
+                    else arrayOf("Удалить загрузку", "Закрыть")
+                AlertDialog.Builder(this)
+                    .setTitle(titles[which].substringBefore(" — "))
+                    .setItems(actions) { _, action ->
+                        when (actions[action]) {
+                            "Открыть" -> try {
+                                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(fileUri, mime)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            } catch (_: Exception) {
+                                Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
+                            }
+                            "Поделиться" -> try {
+                                val share = Intent(Intent.ACTION_SEND).setType(mime)
+                                    .putExtra(Intent.EXTRA_STREAM, fileUri)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                startActivity(Intent.createChooser(share, "Поделиться файлом"))
+                            } catch (_: Exception) {
+                                Toast.makeText(this, "Не удалось поделиться файлом", Toast.LENGTH_LONG).show()
+                            }
+                            "Удалить загрузку" -> {
+                                manager.remove(id)
+                                Toast.makeText(this, "Загрузка удалена", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }.setNegativeButton("Назад", null).show()
             }
             .setPositiveButton("Закрыть", null)
             .show()
