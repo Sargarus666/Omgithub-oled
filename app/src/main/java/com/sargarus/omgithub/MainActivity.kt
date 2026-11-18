@@ -317,6 +317,9 @@ class MainActivity : Activity() {
         content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
         addBrowserTools(content)
+        content.addView(label("ВКЛАДКИ"))
+        content.addView(navItem("▣", "Вкладки (${tabs.size})", "Переключение между страницами") { closeDrawer(); showTabsDialog() })
+        content.addView(navItem("+", "Новая вкладка", "Открыть главную страницу отдельно") { createTab(homeUrl) })
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
         scroll.removeAllViews(); scroll.addView(content)
@@ -448,16 +451,16 @@ class MainActivity : Activity() {
         applyDesktopMode()
         page.loadUrl(url)
         closeDrawer()
-        Toast.makeText(this, "Новая вкладка (\${tabs.size})", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Новая вкладка (${tabs.size})", Toast.LENGTH_SHORT).show()
     }
 
     private fun showTabsDialog() {
         val labels = tabs.mapIndexed { index, tab ->
             val title = tab.view.title?.takeIf { it.isNotBlank() }
                 ?: tab.view.url?.let { Uri.parse(it).host } ?: "Новая вкладка"
-            "\${index + 1}. $title"
+            "${index + 1}. $title"
         }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("Открытые вкладки (\${tabs.size})")
+        AlertDialog.Builder(this).setTitle("Открытые вкладки (${tabs.size})")
             .setItems(labels) { _, which -> switchTab(which) }
             .setPositiveButton("+ Новая вкладка") { _, _ -> createTab(homeUrl) }
             .setNegativeButton("Закрыть текущую") { _, _ -> closeCurrentTab() }
