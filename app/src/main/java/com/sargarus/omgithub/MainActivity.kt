@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.ValueCallback
@@ -51,6 +52,8 @@ class MainActivity : Activity() {
     private val homeUrl = "https://omgithub.com"
     private val githubUrl = "https://github.com"
     private val bookmarksKey = "browser_bookmarks"
+    private var drawerWidthPx = 0
+    private var drawerOpen = false
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
@@ -193,28 +196,12 @@ class MainActivity : Activity() {
         root.addView(scrim, FrameLayout.LayoutParams(-1, -1))
 
         drawer = buildDrawer()
-        val drawerWidth = min(dp(336), resources.displayMetrics.widthPixels - dp(48))
-        val drawerParams = FrameLayout.LayoutParams(drawerWidth, -1, Gravity.START)
+        drawerWidthPx = min(dp(336), resources.displayMetrics.widthPixels - dp(48))
+        val drawerParams = FrameLayout.LayoutParams(drawerWidthPx, -1, Gravity.START)
         root.addView(drawer, drawerParams)
-        drawer.translationX = -drawerWidth.toFloat()
-
-        webView.setOnTouchListener { view, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    edgeDownX = event.x
-                    edgeDownY = event.y
-                    trackingEdgeSwipe = event.x <= dp(28)
-                }
-                MotionEvent.ACTION_UP -> {
-                    val dx = event.x - edgeDownX
-                    val dy = event.y - edgeDownY
-                    if (trackingEdgeSwipe && dx > dp(72) && kotlin.math.abs(dy) < dp(100)) openDrawer()
-                    trackingEdgeSwipe = false
-                }
-                MotionEvent.ACTION_CANCEL -> { trackingEdgeSwipe = false }
-            }
-            false
-        }
+        drawer.translationX = -drawerWidthPx.toFloat()
+        drawer.isClickable = true
+        drawer.isFocusable = true
         setContentView(root)
     }
 
@@ -542,19 +529,68 @@ class MainActivity : Activity() {
         return row
     }
 
+    private val drawerInterpolator by lazy { DecelerateInterpolator(1.7f) }
+
     private fun openDrawer() {
-        if (drawer.translationX == 0f) return
+        if (!::drawer.isInitialized || drawerOpen) return
+        drawerOpen = true
+        drawer.animate().cancel()
+        scrim.animate().cancel()
         scrim.visibility = View.VISIBLE
-        scrim.animate().alpha(1f).setDuration(180).start()
-        drawer.animate().translationX(0f).setDuration(220).start()
+        scrim.animate()
+            .alpha(1f)
+            .setDuration(250)
+            .setInterpolator(drawerInterpolator)
+            .start()
+        drawer.animate()
+            .translationX(0f)
+            .setDuration(280)
+            .setInterpolator(drawerInterpolator)
+            .start()
     }
 
     private fun closeDrawer() {
-        val width = drawer.width.toFloat()
-        drawer.animate().translationX(-width).setDuration(180).withEndAction {
-            scrim.visibility = View.GONE
-            scrim.alpha = 0f
-        }.start()
+        if (!::drawer.isInitialized || !drawerOpen) return
+        drawerOpen = false
+        drawer.animate().cancel()
+        scrim.animate().cancel()
+        val width = if (drawer.width > 0) drawer.width.toFloat() else drawerWidthPx.toFloat()
+        drawer.animate()
+            .translationX(-width)
+            .setDuration(240)
+            .setInterpolator(drawerInterpolator)
+            .withEndAction {
+                if (!drawerOpen) {
+                    scrim.visibility = View.GONE
+                    scrim.alpha = 0f
+                }
+            }
+            .start()
+        scrim.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .setInterpolator(drawerInterpolator)
+            .start()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                edgeDownX = event.rawX
+                edgeDownY = event.rawY
+                trackingEdgeSwipe = !drawerOpen && event.rawX <= dp(28)
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.rawX - edgeDownX
+                val dy = event.rawY - edgeDownY
+                if (trackingEdgeSwipe && dx > dp(64) && kotlin.math.abs(dy) < dp(90)) {
+                    openDrawer()
+                }
+                trackingEdgeSwipe = false
+            }
+            MotionEvent.ACTION_CANCEL -> trackingEdgeSwipe = false
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     private fun navigate(url: String) {
@@ -652,7 +688,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (drawer.translationX == 0f) closeDrawer()
+        if (drawerOpen) closeDrawer()
         else if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
         else super.onBackPressed()
     }
