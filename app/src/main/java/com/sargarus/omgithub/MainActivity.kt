@@ -102,7 +102,6 @@ class MainActivity : Activity() {
         drawer = buildDrawer()
         val drawerWidth = min(dp(336), resources.displayMetrics.widthPixels - dp(48))
         val drawerParams = FrameLayout.LayoutParams(drawerWidth, -1, Gravity.START)
-        drawerParams.leftMargin = -drawerWidth
         root.addView(drawer, drawerParams)
         drawer.translationX = -drawerWidth.toFloat()
 
@@ -129,7 +128,7 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(28), dp(20), dp(24))
-            background = rounded(surface(), dp(0), 0, dp(26), dp(26))
+            background = rounded(surface(), dp(26))
             elevation = dp(18).toFloat()
         }
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
