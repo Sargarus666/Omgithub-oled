@@ -14,6 +14,8 @@ import android.os.Message
 import android.webkit.DownloadListener
 import android.webkit.URLUtil
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -45,6 +47,8 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("omgithub", MODE_PRIVATE) }
     private val homeUrl = "https://omgithub.com"
     private val githubUrl = "https://github.com"
+    private val historyKey = "browser_history"
+    private val bookmarksKey = "browser_bookmarks"
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
@@ -155,6 +159,7 @@ class MainActivity : Activity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
+                    rememberHistory(url)
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
@@ -226,7 +231,13 @@ class MainActivity : Activity() {
         content.addView(brand)
         content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
         content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
-        content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
+        content.addView(navItem("⌘", "GitHub", "Главная GitHub") { navigate(githubUrl) })
+        content.addView(navItem("◉", "Мои репозитории", "Репозитории аккаунта") { navigate("https://github.com/your-repositories") })
+        content.addView(navItem("★", "Звёзды", "Сохранённые репозитории GitHub") { navigate("https://github.com/stars") })
+        content.addView(label("ИНСТРУМЕНТЫ"))
+        content.addView(navItem("☆", "Добавить в избранное", "Сохранить текущую страницу") { addBookmark() })
+        content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
+        content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
@@ -273,7 +284,13 @@ class MainActivity : Activity() {
         })
         content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
         content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
-        content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
+        content.addView(navItem("⌘", "GitHub", "Главная GitHub") { navigate(githubUrl) })
+        content.addView(navItem("◉", "Мои репозитории", "Репозитории аккаунта") { navigate("https://github.com/your-repositories") })
+        content.addView(navItem("★", "Звёзды", "Сохранённые репозитории GitHub") { navigate("https://github.com/stars") })
+        content.addView(label("ИНСТРУМЕНТЫ"))
+        content.addView(navItem("☆", "Добавить в избранное", "Сохранить текущую страницу") { addBookmark() })
+        content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
+        content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
@@ -462,6 +479,64 @@ class MainActivity : Activity() {
         } else null
         callback.onReceiveValue(results)
     }
+    private fun rememberHistory(url: String) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        val items = readSavedItems(historyKey)
+        items.removeAll { it.optString("url") == url }
+        val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
+        items.add(0, JSONObject().put("title", title).put("url", url))
+        while (items.size > 60) items.removeAt(items.lastIndex)
+        writeSavedItems(historyKey, items)
+    }
+
+    private fun addBookmark() {
+        val url = webView.url ?: run {
+            Toast.makeText(this, "Страница ещё не загружена", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
+        val items = readSavedItems(bookmarksKey)
+        if (items.any { it.optString("url") == url }) {
+            Toast.makeText(this, "Уже есть в избранном", Toast.LENGTH_SHORT).show()
+            return
+        }
+        items.add(0, JSONObject().put("title", title).put("url", url))
+        writeSavedItems(bookmarksKey, items)
+        closeDrawer()
+        Toast.makeText(this, "Добавлено в избранное", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun readSavedItems(key: String): MutableList<JSONObject> {
+        val raw = prefs.getString(key, "[]") ?: "[]"
+        return runCatching {
+            val array = JSONArray(raw)
+            MutableList(array.length()) { index -> array.getJSONObject(index) }
+        }.getOrDefault(mutableListOf())
+    }
+
+    private fun writeSavedItems(key: String, items: List<JSONObject>) {
+        val array = JSONArray()
+        items.forEach { array.put(it) }
+        prefs.edit().putString(key, array.toString()).apply()
+    }
+
+    private fun showSavedPages(key: String, title: String) {
+        val items = readSavedItems(key)
+        if (items.isEmpty()) {
+            AlertDialog.Builder(this).setTitle(title)
+                .setMessage(if (key == bookmarksKey) "Сохраняй страницы через «Добавить в избранное» в боковом меню." else "Здесь появятся недавно открытые страницы.")
+                .setPositiveButton("Понятно", null).show()
+            return
+        }
+        val labels = items.map { it.optString("title", it.optString("url")) }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(title).setItems(labels) { _, index ->
+            navigate(items[index].optString("url"))
+        }.setNeutralButton("Очистить") { _, _ ->
+            writeSavedItems(key, emptyList())
+            Toast.makeText(this, "$title очищено", Toast.LENGTH_SHORT).show()
+        }.setNegativeButton("Закрыть", null).show()
+    }
+
     private fun showDownloads() {
         val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
         val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
