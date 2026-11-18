@@ -187,6 +187,7 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
+        applyDesktopMode()
         root.addView(webView, FrameLayout.LayoutParams(-1, -1))
 
         scrim = View(this).apply {
@@ -357,7 +358,7 @@ class MainActivity : Activity() {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, title)
-            putExtra(Intent.EXTRA_TEXT, "$title\\n$url")
+            putExtra(Intent.EXTRA_TEXT, "$title\n$url")
         }, "Поделиться страницей"))
     }
 
