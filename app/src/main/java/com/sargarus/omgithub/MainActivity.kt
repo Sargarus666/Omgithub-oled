@@ -439,7 +439,7 @@ class MainActivity : Activity() {
                     return true
                 }
             }
-            setDownloadListener(DownloadListener { downloadUrl, userAgent, disposition, mime ->
+            setDownloadListener(DownloadListener { downloadUrl, userAgent, disposition, mime, _ ->
                 enqueueDownload(downloadUrl, userAgent, disposition, mime)
             })
         }
