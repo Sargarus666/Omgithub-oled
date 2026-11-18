@@ -31,6 +31,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -232,10 +233,20 @@ class MainActivity : Activity() {
 
     private fun mainDrawerContent(): LinearLayout {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(TextView(this).apply {
-            text = "OmGithub"; textSize = 24f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(foreground()); setPadding(dp(5), dp(10), dp(5), dp(22))
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), dp(5), dp(20))
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_omgithub)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = "OmGithub"
+            }, LinearLayout.LayoutParams(dp(38), dp(38)))
+            addView(TextView(this@MainActivity).apply {
+                text = "OmGithub"; textSize = 24f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(foreground()); setPadding(dp(12), dp(2), 0, dp(2))
+            })
         })
         content.addView(label("ПРОСТРАНСТВО"))
         content.addView(navItem("⌂", "OmGithub", "omgithub.com") { navigate(homeUrl) })
