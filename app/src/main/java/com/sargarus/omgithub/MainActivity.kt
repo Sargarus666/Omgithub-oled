@@ -274,7 +274,43 @@ class MainActivity : Activity() {
         content.addView(themeOption("Monet", "Цвета Android", "monet"))
         content.addView(label("ЦВЕТ АКЦЕНТА"))
         content.addView(accentPalette())
+
+        content.addView(View(this), LinearLayout.LayoutParams(1, dp(22)))
+        content.addView(View(this).apply {
+            setBackgroundColor(muted().withAlpha(65))
+        }, LinearLayout.LayoutParams(-1, dp(1)))
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(14), dp(4), dp(10))
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_omgithub)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = "OmGithubWeb"
+            }, LinearLayout.LayoutParams(dp(30), dp(30)))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), 0, 0, 0)
+                addView(TextView(this@MainActivity).apply {
+                    text = "OmGithubWeb"
+                    textSize = 13f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(foreground())
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = "Версия ${appVersion()}"
+                    textSize = 11f
+                    setTextColor(muted())
+                })
+            })
+        })
         drawerContent(scroll, content)
+    }
+
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.1"
+    } catch (_: Exception) {
+        "1.1"
     }
 
     private fun isBookmarked(): Boolean {
