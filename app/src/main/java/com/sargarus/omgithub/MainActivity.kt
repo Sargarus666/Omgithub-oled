@@ -5,6 +5,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Intent
+import android.content.ClipboardManager
+import android.content.ClipData
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.util.Base64
@@ -54,6 +56,7 @@ class MainActivity : Activity() {
     private var trackingEdgeSwipe = false
     @Volatile private var trustedPageHost: String = ""
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var mobileUserAgent = ""
     private val fileChooserRequest = 4107
 
     private val theme: String get() = prefs.getString("theme", "oled") ?: "oled"
@@ -113,6 +116,8 @@ class MainActivity : Activity() {
             settings.allowFileAccess = false
             settings.allowContentAccess = true
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mobileUserAgent = settings.userAgentString
+            applyDesktopMode()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) settings.safeBrowsingEnabled = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -244,6 +249,7 @@ class MainActivity : Activity() {
         content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
         content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
+        addBrowserTools(content)
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
         scroll.addView(content)
@@ -297,9 +303,69 @@ class MainActivity : Activity() {
         content.addView(navItem("▣", "Избранное", "Сохранённые страницы") { closeDrawer(); showSavedPages(bookmarksKey, "Избранное") })
         content.addView(navItem("◷", "История", "Недавно открытые страницы") { closeDrawer(); showSavedPages(historyKey, "История") })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
+        addBrowserTools(content)
         content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
         scroll.removeAllViews(); scroll.addView(content)
+    }
+
+    private fun addBrowserTools(content: LinearLayout) {
+        content.addView(label("БРАУЗЕР"))
+        content.addView(navItem("←", "Назад", "Предыдущая страница") {
+            closeDrawer()
+            if (webView.canGoBack()) webView.goBack()
+        })
+        content.addView(navItem("→", "Вперёд", "Следующая страница") {
+            closeDrawer()
+            if (webView.canGoForward()) webView.goForward()
+        })
+        content.addView(navItem("↻", "Обновить", "Перезагрузить страницу") {
+            closeDrawer()
+            webView.reload()
+        })
+        content.addView(navItem("⇧", "Поделиться страницей", "Отправить текущую ссылку") {
+            closeDrawer()
+            shareCurrentPage()
+        })
+        content.addView(navItem("▤", "Копировать ссылку", "Скопировать адрес страницы") {
+            closeDrawer()
+            copyCurrentPage()
+        })
+        val desktop = prefs.getBoolean("desktop_mode", false)
+        content.addView(navItem("▣", if (desktop) "Мобильная версия" else "Версия для ПК",
+            if (desktop) "Вернуться к мобильному сайту" else "Запросить настольный сайт") {
+            prefs.edit().putBoolean("desktop_mode", !prefs.getBoolean("desktop_mode", false)).apply()
+            applyDesktopMode()
+            closeDrawer()
+            webView.reload()
+            Toast.makeText(this, if (prefs.getBoolean("desktop_mode", false)) "Режим ПК включён" else "Мобильный режим включён", Toast.LENGTH_SHORT).show()
+        })
+    }
+
+    private fun applyDesktopMode() {
+        if (!::webView.isInitialized || mobileUserAgent.isBlank()) return
+        webView.settings.userAgentString = if (prefs.getBoolean("desktop_mode", false)) {
+            mobileUserAgent.replace(Regex("Android [^;)]+;\\s*"), "")
+                .replace("Mobile", "")
+                .replace("Linux;", "X11; Linux x86_64;")
+        } else mobileUserAgent
+    }
+
+    private fun shareCurrentPage() {
+        val url = webView.url ?: return
+        val title = webView.title?.takeIf { it.isNotBlank() } ?: url
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, "$title\\n$url")
+        }, "Поделиться страницей"))
+    }
+
+    private fun copyCurrentPage() {
+        val url = webView.url ?: return
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка", url))
+        Toast.makeText(this, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
     }
 
     private fun label(value: String) = TextView(this).apply {
