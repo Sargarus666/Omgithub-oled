@@ -446,9 +446,16 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isTrustedWebHost(): Boolean {
+        val host = runCatching { Uri.parse(webView.url ?: "").host?.lowercase().orEmpty() }.getOrDefault("")
+        return host == "omgithub.com" || host.endsWith(".omgithub.com") ||
+            host == "github.com" || host.endsWith(".github.com")
+    }
+
     private inner class DownloadBridge {
         @JavascriptInterface
         fun saveBlob(base64: String, fileName: String, mimeType: String) {
+            if (!isTrustedWebHost()) return
             Thread {
                 try {
                     val bytes = Base64.decode(base64, Base64.DEFAULT)
