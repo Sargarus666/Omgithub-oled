@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private val theme: String get() = prefs.getString("theme", "oled") ?: "oled"
     private val accent: Int get() {
         val saved = prefs.getString("accent", "system") ?: "system"
+        if (theme == "oled") return Color.WHITE
         return if (theme == "monet" && saved == "system") monetAccent()
         else runCatching { Color.parseColor(saved) }.getOrDefault(monetAccent())
     }
@@ -65,11 +66,12 @@ class MainActivity : Activity() {
         else -> systemColor("system_neutral1_950", Color.rgb(18, 20, 27))
     }
     private fun surface(): Int = when (theme) {
-        "oled" -> Color.rgb(18, 18, 18)
+        "oled" -> Color.BLACK
         "white" -> Color.rgb(242, 243, 247)
         else -> systemColor("system_neutral2_800", Color.rgb(37, 40, 49))
     }
-    private fun foreground(): Int = if (theme == "monet") systemColor("system_neutral1_50", Color.WHITE)
+    private fun foreground(): Int = if (theme == "oled") Color.WHITE
+        else if (theme == "monet") systemColor("system_neutral1_50", Color.WHITE)
         else if (isDark()) Color.WHITE else Color.rgb(27, 28, 32)
     private fun muted(): Int = if (theme == "monet") systemColor("system_neutral2_200", Color.rgb(185, 188, 198))
         else if (isDark()) Color.rgb(185, 188, 198) else Color.rgb(92, 95, 105)
@@ -205,8 +207,8 @@ class MainActivity : Activity() {
     private fun buildDrawer(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(24))
-            background = rounded(surface(), dp(26))
+            setPadding(dp(20), dp(28), dp(20), dp(20))
+            setBackgroundColor(pageBackground())
             elevation = dp(18).toFloat()
         }
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
@@ -223,23 +225,47 @@ class MainActivity : Activity() {
         content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
         content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
         content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
+        content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
+        scroll.addView(content)
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        return panel
+    }
+
+    private fun showSettingsInDrawer() {
+        val scroll = drawer.getChildAt(0) as? ScrollView ?: return
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(navItem("‹", "Назад", "Главное меню") { showMainDrawerContent() })
+        content.addView(TextView(this).apply {
+            text = "Настройки"; textSize = 25f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(16))
+        })
         content.addView(sectionTitle("ВНЕШНИЙ ВИД"))
         content.addView(label("ТЕМА"))
-        content.addView(themeOption("OLED black", "Чёрный фон, экономия на OLED", "oled"))
+        content.addView(themeOption("OLED black", "Абсолютно чёрный фон, белые надписи и иконки", "oled"))
         content.addView(themeOption("White", "Светлая тема", "white"))
         content.addView(themeOption("Monet", "Цвета обоев Android 12+", "monet"))
         content.addView(label("ЦВЕТ АКЦЕНТА"))
         content.addView(accentPalette())
-        val hint = TextView(this).apply {
-            text = "Проведи пальцем от левого края экрана, чтобы открыть это меню."
-            textSize = 12f
-            setTextColor(muted())
-            setPadding(dp(4), dp(24), dp(4), dp(8))
-        }
-        content.addView(hint)
-        scroll.addView(content)
-        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        return panel
+        scroll.removeAllViews(); scroll.addView(content)
+    }
+
+    private fun showMainDrawerContent() {
+        val scroll = drawer.getChildAt(0) as? ScrollView ?: return
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(TextView(this).apply {
+            text = "◉  OmGithub"; textSize = 25f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(foreground()); setPadding(dp(4), dp(10), dp(4), dp(5))
+        })
+        content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
+        content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
+        content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
+        content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
+        content.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        content.addView(navItem("⚙", "Настройки", "Внешний вид и оформление") { showSettingsInDrawer() })
+        scroll.removeAllViews(); scroll.addView(content)
     }
 
     private fun label(value: String) = TextView(this).apply {
@@ -265,7 +291,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(12), dp(12), dp(12))
-            background = rounded(if (title == "Главная") accent.withAlpha(34) else surface(), dp(18))
+            setBackgroundColor(if (theme == "oled") Color.BLACK else if (title == "Главная") accent.withAlpha(34) else surface())
             setOnClickListener { action() }
         }
         val symbol = TextView(this).apply {
@@ -294,7 +320,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(10), dp(12), dp(10))
-            background = rounded(if (selected) accent.withAlpha(38) else surface(), dp(16))
+            setBackgroundColor(if (theme == "oled") Color.BLACK else if (selected) accent.withAlpha(38) else surface())
             setOnClickListener {
                 prefs.edit().putString("theme", value).apply()
                 recreate()
@@ -321,7 +347,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(7), dp(10), dp(7), dp(10))
-            background = rounded(surface(), dp(18))
+            setBackgroundColor(if (theme == "oled") Color.BLACK else surface())
         }
         colors.forEach { hex ->
             val color = Color.parseColor(hex)
