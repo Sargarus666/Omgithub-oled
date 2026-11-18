@@ -397,7 +397,7 @@ class MainActivity : Activity() {
             Thread {
                 try {
                     val bytes = Base64.decode(base64, Base64.DEFAULT)
-                    val safeName = fileName.substringAfterLast('/').substringAfterLast('\\\\').replace(Regex("[^a-zA-Z0-9._ -]"), "_").ifBlank { "download" }
+                    val safeName = fileName.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[^a-zA-Z0-9._ -]"), "_").ifBlank { "download" }
                     val values = ContentValues().apply {
                         put(MediaStore.Downloads.DISPLAY_NAME, safeName)
                         put(MediaStore.Downloads.MIME_TYPE, mimeType.ifBlank { "application/octet-stream" })
