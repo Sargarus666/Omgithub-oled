@@ -246,8 +246,17 @@ class MainActivity : Activity() {
         content.addView(themeOption("OLED black", "Абсолютно чёрный фон, белые надписи и иконки", "oled"))
         content.addView(themeOption("White", "Светлая тема", "white"))
         content.addView(themeOption("Monet", "Цвета обоев Android 12+", "monet"))
-        content.addView(label("ЦВЕТ АКЦЕНТА"))
-        content.addView(accentPalette())
+        if (theme == "oled") {
+            content.addView(label("ЦВЕТ АКЦЕНТА"))
+            content.addView(TextView(this).apply {
+                text = "Белый акцент закреплён для True OLED"
+                textSize = 13f; setTextColor(Color.WHITE)
+                setPadding(dp(5), dp(8), dp(5), dp(12))
+            })
+        } else {
+            content.addView(label("ЦВЕТ АКЦЕНТА"))
+            content.addView(accentPalette())
+        }
         scroll.removeAllViews(); scroll.addView(content)
     }
 
