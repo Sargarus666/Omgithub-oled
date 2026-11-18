@@ -36,14 +36,27 @@ class MainActivity : Activity() {
     private var trackingEdgeSwipe = false
 
     private val theme: String get() = prefs.getString("theme", "oled") ?: "oled"
-    private val accent: Int get() = if (theme == "monet") monetAccent() else
-        runCatching { Color.parseColor(prefs.getString("accent", "#8AB4F8")) }.getOrDefault(Color.rgb(138, 180, 248))
+    private val accent: Int get() {
+        val saved = prefs.getString("accent", "system") ?: "system"
+        return if (theme == "monet" && saved == "system") monetAccent()
+        else runCatching { Color.parseColor(saved) }.getOrDefault(monetAccent())
+    }
 
     private fun isDark(): Boolean = theme != "white"
-    private fun pageBackground(): Int = if (theme == "oled") Color.BLACK else if (theme == "white") Color.rgb(250, 250, 250) else Color.rgb(18, 20, 27)
-    private fun surface(): Int = if (theme == "oled") Color.rgb(18, 18, 18) else if (theme == "white") Color.rgb(242, 243, 247) else Color.rgb(37, 40, 49)
-    private fun foreground(): Int = if (isDark()) Color.WHITE else Color.rgb(27, 28, 32)
-    private fun muted(): Int = if (isDark()) Color.rgb(185, 188, 198) else Color.rgb(92, 95, 105)
+    private fun pageBackground(): Int = when (theme) {
+        "oled" -> Color.BLACK
+        "white" -> Color.rgb(250, 250, 250)
+        else -> systemColor("system_neutral1_950", Color.rgb(18, 20, 27))
+    }
+    private fun surface(): Int = when (theme) {
+        "oled" -> Color.rgb(18, 18, 18)
+        "white" -> Color.rgb(242, 243, 247)
+        else -> systemColor("system_neutral2_800", Color.rgb(37, 40, 49))
+    }
+    private fun foreground(): Int = if (theme == "monet") systemColor("system_neutral1_50", Color.WHITE)
+        else if (isDark()) Color.WHITE else Color.rgb(27, 28, 32)
+    private fun muted(): Int = if (theme == "monet") systemColor("system_neutral2_200", Color.rgb(185, 188, 198))
+        else if (isDark()) Color.rgb(185, 188, 198) else Color.rgb(92, 95, 105)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -247,11 +260,11 @@ class MainActivity : Activity() {
         colors.forEach { hex ->
             val color = Color.parseColor(hex)
             val dot = TextView(this).apply {
-                text = if (prefs.getString("accent", "#8AB4F8") == hex) "✓" else ""
+                text = if (prefs.getString("accent", "system") == hex) "✓" else ""
                 textSize = 15f
                 gravity = Gravity.CENTER
                 setTextColor(Color.BLACK)
-                background = rounded(color, dp(50), if (prefs.getString("accent", "#8AB4F8") == hex) dp(3) else 0, Color.WHITE, Color.WHITE)
+                background = rounded(color, dp(50), if (prefs.getString("accent", "system") == hex) dp(3) else 0, Color.WHITE, Color.WHITE)
                 setOnClickListener { prefs.edit().putString("accent", hex).apply(); recreate() }
                 contentDescription = "Цвет акцента $hex"
             }
@@ -282,7 +295,7 @@ class MainActivity : Activity() {
         webView.loadUrl(url)
     }
 
-    private fun monetAccent(): Int {
+    private fun systemColor(name: String, fallback: Int): Int {\n        if (Build.VERSION.SDK_INT < 31) return fallback\n        val id = resources.getIdentifier(name, "color", "android")\n        return if (id == 0) fallback else runCatching { getColor(id) }.getOrDefault(fallback)\n    }\n\n    private fun monetAccent(): Int {
         if (Build.VERSION.SDK_INT >= 31) {
             val id = resources.getIdentifier("system_accent1_500", "color", "android")
             if (id != 0) return runCatching { getColor(id) }.getOrDefault(Color.rgb(180, 190, 255))
