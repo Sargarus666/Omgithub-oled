@@ -1,7 +1,3 @@
-dependencies {
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
-}
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -25,4 +21,8 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+dependencies {
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 }
