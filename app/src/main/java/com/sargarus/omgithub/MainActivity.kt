@@ -33,6 +33,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +42,7 @@ import kotlin.math.min
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var root: FrameLayout
     private lateinit var scrim: View
     private lateinit var drawer: LinearLayout
@@ -51,9 +53,6 @@ class MainActivity : Activity() {
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
-    private var trackingPull = false
-    private var pullStartY = 0f
-    private var pullStartX = 0f
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserRequest = 4107
 
@@ -157,6 +156,7 @@ class MainActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
+                    if (::swipeRefresh.isInitialized) swipeRefresh.isRefreshing = false
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -175,7 +175,13 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
-        root.addView(webView, FrameLayout.LayoutParams(-1, -1))
+        swipeRefresh = SwipeRefreshLayout(this).apply {
+            setColorSchemeColors(accent)
+            setProgressBackgroundColorSchemeColor(surface())
+            setOnRefreshListener { webView.reload() }
+        }
+        swipeRefresh.addView(webView, SwipeRefreshLayout.LayoutParams(-1, -1))
+        root.addView(swipeRefresh, FrameLayout.LayoutParams(-1, -1))
 
         scrim = View(this).apply {
             setBackgroundColor(0x99000000.toInt())
@@ -197,19 +203,14 @@ class MainActivity : Activity() {
                     edgeDownX = event.x
                     edgeDownY = event.y
                     trackingEdgeSwipe = event.x <= dp(28)
-                    trackingPull = (view as WebView).scrollY <= 0
-                    pullStartY = event.y
-                    pullStartX = event.x
                 }
                 MotionEvent.ACTION_UP -> {
                     val dx = event.x - edgeDownX
-                    val dy = event.y - pullStartY
+                    val dy = event.y - edgeDownY
                     if (trackingEdgeSwipe && dx > dp(72) && kotlin.math.abs(dy) < dp(100)) openDrawer()
-                    else if (trackingPull && dy > dp(110) && dy > kotlin.math.abs(dx) * 1.25f && (view as WebView).scrollY <= 0) webView.reload()
                     trackingEdgeSwipe = false
-                    trackingPull = false
                 }
-                MotionEvent.ACTION_CANCEL -> { trackingEdgeSwipe = false; trackingPull = false }
+                MotionEvent.ACTION_CANCEL -> { trackingEdgeSwipe = false }
             }
             false
         }
