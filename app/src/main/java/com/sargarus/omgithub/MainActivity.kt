@@ -5,6 +5,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Intent
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.util.Base64
 import android.net.Uri
 import android.os.Environment
 import android.os.Message
@@ -22,6 +25,8 @@ import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.ValueCallback
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -43,6 +48,8 @@ class MainActivity : Activity() {
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var trackingEdgeSwipe = false
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserRequest = 4107
 
     private val theme: String get() = prefs.getString("theme", "oled") ?: "oled"
     private val accent: Int get() {
@@ -99,7 +106,24 @@ class MainActivity : Activity() {
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            addJavascriptInterface(DownloadBridge(), "OmGithubNative")
             webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(webView: WebView?, filePathCallback: ValueCallback<Array<Uri>>?, fileChooserParams: FileChooserParams?): Boolean {
+                    this@MainActivity.fileChooserCallback?.onReceiveValue(null)
+                    this@MainActivity.fileChooserCallback = filePathCallback
+                    return try {
+                        val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }
+                        intent.addCategory(Intent.CATEGORY_OPENABLE)
+                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+                        startActivityForResult(intent, fileChooserRequest)
+                        true
+                    } catch (_: Exception) {
+                        this@MainActivity.fileChooserCallback?.onReceiveValue(null)
+                        this@MainActivity.fileChooserCallback = null
+                        Toast.makeText(this@MainActivity, "Не удалось открыть выбор файла", Toast.LENGTH_LONG).show()
+                        false
+                    }
+                }
                 override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
                     val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
                     val popup = WebView(this@MainActivity)
@@ -123,6 +147,10 @@ class MainActivity : Activity() {
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
+                }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
                     val scheme = uri.scheme?.lowercase() ?: return true
@@ -363,6 +391,39 @@ class MainActivity : Activity() {
         }
     }
 
+    private inner class DownloadBridge {
+        @JavascriptInterface
+        fun saveBlob(base64: String, fileName: String, mimeType: String) {
+            Thread {
+                try {
+                    val bytes = Base64.decode(base64, Base64.DEFAULT)
+                    val safeName = fileName.substringAfterLast('/').substringAfterLast('\\\\').replace(Regex("[^a-zA-Z0-9._ -]"), "_").ifBlank { "download" }
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, safeName)
+                        put(MediaStore.Downloads.MIME_TYPE, mimeType.ifBlank { "application/octet-stream" })
+                        if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw IllegalStateException("Не удалось создать файл")
+                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw IllegalStateException("Не удалось записать файл")
+                    runOnUiThread { Toast.makeText(this@MainActivity, "Файл сохранён: $safeName", Toast.LENGTH_LONG).show() }
+                } catch (e: Exception) {
+                    runOnUiThread { Toast.makeText(this@MainActivity, "Ошибка сохранения: " + e.localizedMessage, Toast.LENGTH_LONG).show() }
+                }
+            }.start()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != fileChooserRequest) return
+        val callback = fileChooserCallback ?: return
+        fileChooserCallback = null
+        val results = if (resultCode == Activity.RESULT_OK && data != null) {
+            val clip = data.clipData
+            when { clip != null -> Array(clip.itemCount) { i -> clip.getItemAt(i).uri }; data.data != null -> arrayOf(data.data!!); else -> null }
+        } else null
+        callback.onReceiveValue(results)
+    }
     private fun showDownloads() {
         val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
         val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
@@ -418,7 +479,12 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun systemColor(name: String, fallback: Int): Int {\n        if (Build.VERSION.SDK_INT < 31) return fallback\n        val id = resources.getIdentifier(name, "color", "android")\n        return if (id == 0) fallback else runCatching { getColor(id) }.getOrDefault(fallback)\n    }\n\n    private fun monetAccent(): Int {
+    private fun systemColor(name: String, fallback: Int): Int {
+        if (Build.VERSION.SDK_INT < 31) return fallback
+        val id = resources.getIdentifier(name, "color", "android")
+        return if (id == 0) fallback else runCatching { getColor(id) }.getOrDefault(fallback)
+    }
+    private fun monetAccent(): Int {
         if (Build.VERSION.SDK_INT >= 31) {
             val id = resources.getIdentifier("system_accent1_500", "color", "android")
             if (id != 0) return runCatching { getColor(id) }.getOrDefault(Color.rgb(180, 190, 255))
@@ -455,4 +521,23 @@ class MainActivity : Activity() {
         }
         super.onDestroy()
     }
+    private val BLOB_DOWNLOAD_SCRIPT = """
+        (function() {
+          if (window.__omGithubBlobHook) return;
+          window.__omGithubBlobHook = true;
+          document.addEventListener("click", function(event) {
+            var a = event.target && event.target.closest ? event.target.closest("a[download]") : null;
+            if (!a || !a.href || !a.href.startsWith("blob:")) return;
+            event.preventDefault(); event.stopPropagation();
+            fetch(a.href).then(function(r) { return r.blob(); }).then(function(blob) {
+              var reader = new FileReader();
+              reader.onload = function() {
+                var data = String(reader.result).split(",")[1] || "";
+                window.OmGithubNative.saveBlob(data, a.download || "download", blob.type || "application/octet-stream");
+              };
+              reader.readAsDataURL(blob);
+            }).catch(function() {});
+          }, true);
+        })();
+    """.trimIndent()
 }
