@@ -1,0 +1,33 @@
+name: Unpack Android project
+on:
+  push:
+    paths:
+      - downloads/OmGithubOLED-Android-Project.zip
+      - .github/workflows/unpack-project.yml
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Unpack project into repository root
+        run: |
+          mkdir -p /tmp/omg
+          unzip -o downloads/OmGithubOLED-Android-Project.zip -d /tmp/omg
+          cp -a /tmp/omg/OmGithubOLED/. .
+          rm downloads/OmGithubOLED-Android-Project.zip
+          rmdir downloads 2>/dev/null || true
+      - name: Commit unpacked project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Unpack Android project into repository root"
+            git push
+          fi
