@@ -2,6 +2,15 @@ package com.sargarus.omgithub
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.DownloadManager
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
+import android.os.Message
+import android.webkit.DownloadListener
+import android.webkit.URLUtil
+import android.widget.Toast
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -84,19 +93,47 @@ class MainActivity : Activity() {
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
             settings.javaScriptCanOpenWindowsAutomatically = true
-            settings.setSupportMultipleWindows(false)
+            settings.setSupportMultipleWindows(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            webChromeClient = WebChromeClient()
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val scheme = request.url.scheme ?: return true
-                    return scheme != "http" && scheme != "https"
+            webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                    val popup = WebView(this@MainActivity)
+                    popup.settings.javaScriptEnabled = true
+                    popup.settings.domStorageEnabled = true
+                    popup.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                            val target = request.url
+                            if (target.scheme == "http" || target.scheme == "https") {
+                                webView.loadUrl(target.toString())
+                            } else {
+                                openExternalLink(target)
+                            }
+                            v.destroy()
+                            return true
+                        }
+                    }
+                    transport.webView = popup
+                    resultMsg.sendToTarget()
+                    return true
                 }
             }
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val uri = request.url
+                    val scheme = uri.scheme?.lowercase() ?: return true
+                    if (scheme == "http" || scheme == "https") return false
+                    openExternalLink(uri)
+                    return true
+                }
+            }
+            setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                enqueueDownload(url, userAgent, contentDisposition, mimeType)
+            })
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 settings.forceDark = if (isDark()) android.webkit.WebSettings.FORCE_DARK_ON
                     else android.webkit.WebSettings.FORCE_DARK_OFF
@@ -157,6 +194,7 @@ class MainActivity : Activity() {
         content.addView(label("ВАШЕ ПРОСТРАНСТВО"))
         content.addView(navItem("⌂", "Главная", "omgithub.com") { navigate(homeUrl) })
         content.addView(navItem("⌘", "GitHub", "github.com") { navigate(githubUrl) })
+        content.addView(navItem("↓", "Скачанные файлы", "Загрузки устройства") { closeDrawer(); showDownloads() })
         content.addView(sectionTitle("ВНЕШНИЙ ВИД"))
         content.addView(label("ТЕМА"))
         content.addView(themeOption("OLED black", "Чёрный фон, экономия на OLED", "oled"))
@@ -293,6 +331,91 @@ class MainActivity : Activity() {
     private fun navigate(url: String) {
         closeDrawer()
         webView.loadUrl(url)
+    }
+
+    private fun openExternalLink(uri: Uri) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun enqueueDownload(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
+        try {
+            val uri = Uri.parse(url)
+            val request = DownloadManager.Request(uri)
+            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+                .substringAfterLast('/').ifBlank { "download" }
+            val cookies = CookieManager.getInstance().getCookie(url)
+            if (!cookies.isNullOrBlank()) request.addRequestHeader("Cookie", cookies)
+            if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
+            request.setTitle(fileName)
+            request.setDescription("Загрузка из OmGithub")
+            request.setMimeType(mimeType ?: "application/octet-stream")
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            manager.enqueue(request)
+            Toast.makeText(this, "Загрузка началась: $fileName", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Не удалось начать загрузку: ${e.localizedMessage ?: "ошибка"}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showDownloads() {
+        val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+        val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
+            DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or
+                DownloadManager.STATUS_PAUSED or DownloadManager.STATUS_SUCCESSFUL or
+                DownloadManager.STATUS_FAILED
+        ))
+        val ids = mutableListOf<Long>()
+        val titles = mutableListOf<String>()
+        cursor?.use {
+            val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
+            val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            while (it.moveToNext()) {
+                val id = it.getLong(idCol)
+                val status = it.getInt(statusCol)
+                val title = it.getString(titleCol) ?: "Файл"
+                ids.add(id)
+                titles.add(when (status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> "✓  $title"
+                    DownloadManager.STATUS_FAILED -> "✕  $title — ошибка"
+                    DownloadManager.STATUS_PAUSED -> "Ⅱ  $title — пауза"
+                    else -> "↓  $title — загружается"
+                })
+            }
+        }
+        if (titles.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Скачанные файлы")
+                .setMessage("Здесь пока пусто. Скачанные файлы будут появляться в этом списке.")
+                .setPositiveButton("Понятно", null)
+                .show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Скачанные файлы")
+            .setItems(titles.toTypedArray()) { _, which ->
+                val id = ids[which]
+                try {
+                    val fileUri = manager.getUriForDownloadedFile(id)
+                    if (fileUri == null) {
+                        Toast.makeText(this, "Файл ещё не готов или загрузка завершилась ошибкой", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(fileUri, mime)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    }
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Не найдено приложение для открытия этого файла", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setPositiveButton("Закрыть", null)
+            .show()
     }
 
     private fun systemColor(name: String, fallback: Int): Int {\n        if (Build.VERSION.SDK_INT < 31) return fallback\n        val id = resources.getIdentifier(name, "color", "android")\n        return if (id == 0) fallback else runCatching { getColor(id) }.getOrDefault(fallback)\n    }\n\n    private fun monetAccent(): Int {
