@@ -215,12 +215,12 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
-        // Reserve the upper 64dp for the Android status/notification shade and
-        // OmGithub's black header. Refresh can start only in the band below it.
-        swipeRefresh = EdgeOnlySwipeRefreshLayout(this, dp(64), dp(48)).apply {
+        // Keep the Android status bar and OmGithub header clear. The refresh
+        // gesture may start in the tall content band directly below the header.
+        swipeRefresh = EdgeOnlySwipeRefreshLayout(this, dp(64), dp(208)).apply {
             setColorSchemeColors(accent)
             setProgressBackgroundColorSchemeColor(surface())
-            setProgressViewOffset(false, dp(56), dp(112))
+            setProgressViewOffset(false, dp(64), dp(120))
             setOnChildScrollUpCallback { _, _ -> webView.canScrollVertically(-1) }
             setOnRefreshListener { webView.reload() }
         }
