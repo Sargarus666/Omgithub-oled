@@ -182,6 +182,9 @@ class MainActivity : Activity() {
         swipeRefresh = SwipeRefreshLayout(this).apply {
             setColorSchemeColors(accent)
             setProgressBackgroundColorSchemeColor(surface())
+            // WebView must be allowed to consume downward gestures while its page is scrolled.
+            // Only start pull-to-refresh when the document is already at the very top.
+            setOnChildScrollUpCallback { _, _ -> webView.canScrollVertically(-1) }
             setOnRefreshListener { webView.reload() }
         }
         swipeRefresh.addView(webView, -1, -1)
