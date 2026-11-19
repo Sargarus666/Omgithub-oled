@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Intent
+import android.content.Context
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.util.Base64
@@ -41,6 +42,38 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Pull-to-refresh is armed only when the user's finger starts in the narrow
+ * strip at the very top of the content. All other vertical gestures belong
+ * exclusively to the WebView, so page scrolling cannot trigger a reload.
+ */
+private class EdgeOnlySwipeRefreshLayout(
+    context: Context,
+    private val topEdgeHeightPx: Int
+) : SwipeRefreshLayout(context) {
+    private var gestureStartedAtTop = false
+
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            gestureStartedAtTop = event.y <= topEdgeHeightPx
+            if (!gestureStartedAtTop) return false
+        } else if (!gestureStartedAtTop) {
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                gestureStartedAtTop = false
+            }
+            return false
+        }
+
+        val intercepted = super.onInterceptTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            gestureStartedAtTop = false
+        }
+        return intercepted
+    }
+}
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
@@ -179,11 +212,11 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
-        swipeRefresh = SwipeRefreshLayout(this).apply {
+        swipeRefresh = EdgeOnlySwipeRefreshLayout(this, dp(36)).apply {
             setColorSchemeColors(accent)
             setProgressBackgroundColorSchemeColor(surface())
-            // WebView must be allowed to consume downward gestures while its page is scrolled.
-            // Only start pull-to-refresh when the document is already at the very top.
+            // Refresh is additionally restricted to gestures that begin in the top 36dp.
+            // The WebView keeps every swipe that starts lower on the page.
             setOnChildScrollUpCallback { _, _ -> webView.canScrollVertically(-1) }
             setOnRefreshListener { webView.reload() }
         }
