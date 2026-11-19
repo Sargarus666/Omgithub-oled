@@ -44,24 +44,27 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Pull-to-refresh is armed only when the user's finger starts in the narrow
- * strip at the very top of the content. All other vertical gestures belong
- * exclusively to the WebView, so page scrolling cannot trigger a reload.
+ * Pull-to-refresh is armed only inside a touch band positioned below the
+ * OmGithub top bar. Touches at the physical top edge and all other vertical
+ * gestures stay with Android's system UI or the WebView.
  */
 private class EdgeOnlySwipeRefreshLayout(
     context: Context,
-    private val topEdgeHeightPx: Int
+    private val touchBandTopPx: Int,
+    private val touchBandHeightPx: Int
 ) : SwipeRefreshLayout(context) {
-    private var gestureStartedAtTop = false
+    private var gestureStartedInBand = false
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            gestureStartedAtTop = event.y <= topEdgeHeightPx
-            if (!gestureStartedAtTop) return false
-        } else if (!gestureStartedAtTop) {
+            val y = event.y
+            gestureStartedInBand = y >= touchBandTopPx &&
+                y <= touchBandTopPx + touchBandHeightPx
+            if (!gestureStartedInBand) return false
+        } else if (!gestureStartedInBand) {
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                gestureStartedAtTop = false
+                gestureStartedInBand = false
             }
             return false
         }
@@ -69,7 +72,7 @@ private class EdgeOnlySwipeRefreshLayout(
         val intercepted = super.onInterceptTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP ||
             event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            gestureStartedAtTop = false
+            gestureStartedInBand = false
         }
         return intercepted
     }
@@ -212,11 +215,12 @@ class MainActivity : Activity() {
                     else android.webkit.WebSettings.FORCE_DARK_OFF
             }
         }
-        swipeRefresh = EdgeOnlySwipeRefreshLayout(this, dp(36)).apply {
+        // Reserve the upper 64dp for the Android status/notification shade and
+        // OmGithub's black header. Refresh can start only in the band below it.
+        swipeRefresh = EdgeOnlySwipeRefreshLayout(this, dp(64), dp(48)).apply {
             setColorSchemeColors(accent)
             setProgressBackgroundColorSchemeColor(surface())
-            // Refresh is additionally restricted to gestures that begin in the top 36dp.
-            // The WebView keeps every swipe that starts lower on the page.
+            setProgressViewOffset(false, dp(56), dp(112))
             setOnChildScrollUpCallback { _, _ -> webView.canScrollVertically(-1) }
             setOnRefreshListener { webView.reload() }
         }
