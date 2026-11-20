@@ -842,12 +842,17 @@ class MainActivity : Activity() {
 
     private fun openExternalLink(uri: Uri) {
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
+            val intent = if (uri.scheme.equals("intent", true)) Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, uri)
+            if (intent.resolveActivity(packageManager) != null) startActivity(intent)
+            else {
+                val fallback = intent.getStringExtra("browser_fallback_url")
+                if (!fallback.isNullOrBlank()) webView.loadUrl(fallback)
+                else Toast.makeText(this, "Нет приложения для открытия этой ссылки", Toast.LENGTH_SHORT).show()
+            }
         } catch (_: Exception) {
             Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
         }
     }
-
     private fun enqueueDownload(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
         try {
             val uri = Uri.parse(url)
