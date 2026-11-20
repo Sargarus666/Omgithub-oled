@@ -147,11 +147,11 @@ class MainActivity : Activity() {
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
             settings.javaScriptCanOpenWindowsAutomatically = true
-            settings.setSupportZoom(true)
-            settings.builtInZoomControls = false
-            settings.displayZoomControls = false
-            settings.setOffscreenPreRaster(prefs.getBoolean("webview_preload", true))
-            setLayerType(if (prefs.getBoolean("webview_hardware", true)) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE, null)
+            setLayerType(
+                if (prefs.getBoolean("webview_hardware", true)) View.LAYER_TYPE_HARDWARE
+                else View.LAYER_TYPE_SOFTWARE,
+                null
+            )
             settings.setSupportMultipleWindows(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = true
@@ -203,7 +203,9 @@ class MainActivity : Activity() {
                     super.onPageFinished(view, url)
                     if (::swipeRefresh.isInitialized) swipeRefresh.isRefreshing = false
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
-                    if (prefs.getBoolean("webview_preload", true)) view.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
+                    if (prefs.getBoolean("webview_preload", true)) {
+                        view.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
+                    }
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
@@ -322,26 +324,43 @@ class MainActivity : Activity() {
         content.addView(accentPalette())
 
         content.addView(sectionTitle("БРАУЗЕР"))
-        content.addView(settingToggle("Аппаратное ускорение WebView", "Использовать GPU для отрисовки страниц", "webview_hardware", true) {
-            webView.setLayerType(if (it) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE, null)
+        content.addView(settingToggle(
+            "Аппаратное ускорение WebView",
+            "Использовать GPU для отрисовки страниц",
+            "webview_hardware",
+            true
+        ) { enabled ->
+            webView.setLayerType(
+                if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE,
+                null
+            )
         })
-        content.addView(settingToggle("Предзагрузка страниц", "Подготовка соединений с OmGithub и GitHub", "webview_preload", true) {
-            if (it) webView.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
+        content.addView(settingToggle(
+            "Предзагрузка страниц",
+            "Ускорять подключение к OmGithub и GitHub",
+            "webview_preload",
+            true
+        ) { enabled ->
+            if (enabled) webView.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
         })
         content.addView(navItem("⌫", "Очистка кэша", "Удалить временные файлы WebView") {
             webView.clearCache(true)
             Toast.makeText(this, "Кэш WebView очищен", Toast.LENGTH_SHORT).show()
         })
-        content.addView(navItem("◉", "Очистка cookies", "Удалить cookies и выйти из аккаунтов") {
-            AlertDialog.Builder(this).setTitle("Очистить cookies?")
-                .setMessage("Вы выйдете из аккаунтов на сайтах. Действие нельзя отменить.")
+        content.addView(navItem("◉", "Очистка cookies", "Удалить cookies и завершить сеансы сайтов") {
+            AlertDialog.Builder(this)
+                .setTitle("Очистить cookies?")
+                .setMessage("Вы выйдете из аккаунтов на сайтах. Продолжить?")
                 .setNegativeButton("Отмена", null)
                 .setPositiveButton("Очистить") { _, _ ->
                     CookieManager.getInstance().removeAllCookies {
                         CookieManager.getInstance().flush()
-                        runOnUiThread { Toast.makeText(this, "Cookies очищены", Toast.LENGTH_SHORT).show() }
+                        runOnUiThread {
+                            Toast.makeText(this, "Cookies очищены", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                }.show()
+                }
+                .show()
         })
 
         content.addView(View(this), LinearLayout.LayoutParams(1, dp(22)))
@@ -376,7 +395,13 @@ class MainActivity : Activity() {
         drawerContent(scroll, content)
     }
 
-    private fun settingToggle(title: String, description: String, key: String, defaultValue: Boolean, onChanged: (Boolean) -> Unit = {}): View {
+    private fun settingToggle(
+        title: String,
+        description: String,
+        key: String,
+        defaultValue: Boolean,
+        onChanged: (Boolean) -> Unit
+    ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -385,20 +410,27 @@ class MainActivity : Activity() {
         }
         val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         copy.addView(TextView(this).apply {
-            text = title; textSize = 14f
+            text = title
+            textSize = 14f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(foreground())
         })
-        copy.addView(TextView(this).apply { text = description; textSize = 11f; setTextColor(muted()) })
+        copy.addView(TextView(this).apply {
+            text = description
+            textSize = 11f
+            setTextColor(muted())
+        })
         row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(android.widget.Switch(this).apply {
             isChecked = prefs.getBoolean(key, defaultValue)
-            setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean(key, checked).apply()
-                onChanged(checked)
+            setOnCheckedChangeListener { _, enabled ->
+                prefs.edit().putBoolean(key, enabled).apply()
+                onChanged(enabled)
             }
         })
-        row.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }
+        row.layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(4)
+        }
         return row
     }
 
@@ -438,7 +470,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Удалено из избранного", Toast.LENGTH_SHORT).show()
         } else {
             val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
-            items.add(0, JSONObject().put("title", title).put("url", url).put("folder", "Основное"))
+            items.add(0, JSONObject().put("title", title).put("url", url))
             saveBookmarks(items)
             Toast.makeText(this, "Добавлено в избранное", Toast.LENGTH_SHORT).show()
         }
@@ -455,74 +487,30 @@ class MainActivity : Activity() {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
         })
-        content.addView(navItem("+", "Новая папка", "Создать папку для закладок") {
-            val input = android.widget.EditText(this).apply { hint = "Название папки" }
-            AlertDialog.Builder(this).setTitle("Новая папка").setView(input)
-                .setNegativeButton("Отмена", null)
-                .setPositiveButton("Создать") { _, _ ->
-                    val name = input.text.toString().trim()
-                    if (name.isNotEmpty()) {
-                        val folders = (readBookmarks().map { it.optString("folder", "Основное") } + name).distinct()
-                        prefs.edit().putString("bookmark_folders", JSONArray(folders).toString()).apply()
-                        showBookmarksInDrawer()
-                    }
-                }.show()
-        })
         val items = readBookmarks()
-        val savedFolders = runCatching {
-            val a = JSONArray(prefs.getString("bookmark_folders", "[]"))
-            List(a.length()) { a.getString(it) }
-        }.getOrDefault(emptyList())
-        val folderNames = (listOf("Основное") + items.map { it.optString("folder", "Основное") } + savedFolders).distinct()
-        folderNames.forEach { folder ->
-            val folderItems = items.filter { it.optString("folder", "Основное") == folder }
-            content.addView(sectionTitle(folder + " · " + folderItems.size))
-            folderItems.forEach { item ->
-                val url = item.optString("url")
-                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                row.addView(navItem("★", item.optString("title", url), Uri.parse(url).host ?: url) {
-                    closeDrawer(); webView.loadUrl(url)
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                row.addView(TextView(this).apply {
-                    text = "⋮"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(muted())
-                    setOnClickListener {
-                        val updated = readBookmarks()
-                        val target = updated.firstOrNull { it.optString("url") == url } ?: return@setOnClickListener
-                        AlertDialog.Builder(this@MainActivity)
-                            .setItems(arrayOf("Переименовать", "Переместить в папку", "Удалить")) { _, choice ->
-                                when (choice) {
-                                    0 -> {
-                                        val edit = android.widget.EditText(this@MainActivity).apply { setText(target.optString("title")) }
-                                        AlertDialog.Builder(this@MainActivity).setTitle("Название закладки").setView(edit)
-                                            .setNegativeButton("Отмена", null)
-                                            .setPositiveButton("Сохранить") { _, _ ->
-                                                target.put("title", edit.text.toString().trim().ifBlank { url })
-                                                saveBookmarks(updated); showBookmarksInDrawer()
-                                            }.show()
-                                    }
-                                    1 -> AlertDialog.Builder(this@MainActivity).setTitle("Папка")
-                                        .setItems(folderNames.toTypedArray()) { _, index ->
-                                            target.put("folder", folderNames[index]); saveBookmarks(updated); showBookmarksInDrawer()
-                                        }.show()
-                                    2 -> {
-                                        updated.removeAll { it.optString("url") == url }
-                                        saveBookmarks(updated); showBookmarksInDrawer()
-                                    }
-                                }
-                            }.show()
-                    }
-                }, LinearLayout.LayoutParams(dp(40), dp(54)))
-                content.addView(row)
-            }
-        }
         if (items.isEmpty()) content.addView(TextView(this).apply {
             text = "Здесь будут сохранённые страницы. Добавляйте их через пункт «Добавить в избранное»."
             textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
         })
+        items.forEach { item ->
+            val url = item.optString("url")
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(navItem("★", item.optString("title", url), Uri.parse(url).host ?: url) {
+                closeDrawer(); webView.loadUrl(url)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(TextView(this).apply {
+                text = "×"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(muted())
+                setOnClickListener {
+                    val updated = readBookmarks()
+                    updated.removeAll { it.optString("url") == url }
+                    saveBookmarks(updated)
+                    showBookmarksInDrawer()
+                }
+            }, LinearLayout.LayoutParams(dp(40), dp(54)))
+            content.addView(row)
+        }
         if (items.isNotEmpty()) content.addView(navItem("⌫", "Очистить избранное", "Удалить все сохранённые страницы") {
-            AlertDialog.Builder(this).setMessage("Удалить все закладки?")
-                .setNegativeButton("Отмена", null)
-                .setPositiveButton("Удалить") { _, _ -> saveBookmarks(emptyList()); showBookmarksInDrawer() }.show()
+            saveBookmarks(emptyList()); showBookmarksInDrawer()
         })
         drawerContent(scroll, content)
     }
@@ -530,144 +518,77 @@ class MainActivity : Activity() {
     private fun showDownloadsInDrawer() {
         val scroll = drawer.getChildAt(0) as? ScrollView ?: return
         val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        data class DownloadEntry(val id: Long, val title: String, val status: Int, val done: Long, val total: Long, val uri: String, val reason: Int, val mime: String?)
+        val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
+            DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or
+                DownloadManager.STATUS_PAUSED or DownloadManager.STATUS_SUCCESSFUL or DownloadManager.STATUS_FAILED
+        ))
+        data class DownloadEntry(val id: Long, val title: String, val status: Int, val progress: String)
         val entries = mutableListOf<DownloadEntry>()
-        manager.query(DownloadManager.Query()).use { cursor ->
-            val idCol = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
-            val titleCol = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
-            val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            val doneCol = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            val totalCol = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-            val uriCol = cursor.getColumnIndex(DownloadManager.COLUMN_URI)
-            val reasonCol = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
-            val mimeCol = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
-            while (cursor.moveToNext()) entries.add(DownloadEntry(
-                cursor.getLong(idCol),
-                if (titleCol >= 0) cursor.getString(titleCol) ?: "Файл" else "Файл",
-                cursor.getInt(statusCol),
-                if (doneCol >= 0) cursor.getLong(doneCol) else 0L,
-                if (totalCol >= 0) cursor.getLong(totalCol) else -1L,
-                if (uriCol >= 0) cursor.getString(uriCol).orEmpty() else "",
-                if (reasonCol >= 0) cursor.getInt(reasonCol) else 0,
-                if (mimeCol >= 0) cursor.getString(mimeCol) else null
-            ))
+        cursor?.use {
+            val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
+            val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val doneCol = it.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+            val totalCol = it.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+            while (it.moveToNext()) {
+                val status = it.getInt(statusCol)
+                val done = if (doneCol >= 0) it.getLong(doneCol) else 0L
+                val total = if (totalCol >= 0) it.getLong(totalCol) else -1L
+                val progress = if (total > 0) "${((done * 100) / total).coerceIn(0, 100)}%" else ""
+                entries.add(DownloadEntry(it.getLong(idCol), it.getString(titleCol) ?: "Файл", status, progress))
+            }
         }
-        entries.reverse()
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         content.addView(navItem("‹", "Назад", "Главное меню") { drawerContent(scroll, mainDrawerContent()) })
         content.addView(TextView(this).apply {
             text = "Скачанные файлы"; textSize = 25f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(8))
+            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
         })
-        content.addView(navItem("↻", "Обновить список", entries.size.toString() + " загрузок") { showDownloadsInDrawer() })
         if (entries.isEmpty()) content.addView(TextView(this).apply {
             text = "Пока нет загрузок. Скачанные файлы появятся здесь."
             textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
         })
         entries.forEach { entry ->
-            val percent = if (entry.total > 0) ((entry.done * 100) / entry.total).toInt().coerceIn(0, 100) else -1
-            val sizeText = if (entry.total > 0) formatBytes(entry.done) + " / " + formatBytes(entry.total) + " · " + percent + "%"
-                else if (entry.done > 0) formatBytes(entry.done) else ""
             val statusText = when (entry.status) {
-                DownloadManager.STATUS_SUCCESSFUL -> "Готово · " + sizeText
-                DownloadManager.STATUS_FAILED -> "Ошибка · код " + entry.reason
-                DownloadManager.STATUS_PAUSED -> "Приостановлено · " + entry.reason
-                DownloadManager.STATUS_PENDING -> "Ожидание · " + sizeText
-                else -> "Загрузка · " + sizeText
+                DownloadManager.STATUS_SUCCESSFUL -> "Готово · нажмите, чтобы открыть"
+                DownloadManager.STATUS_FAILED -> "Ошибка загрузки"
+                DownloadManager.STATUS_PAUSED -> "Приостановлено"
+                else -> "Загрузка · ${entry.progress}"
             }
-            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(4), dp(8), dp(8)) }
-            val item = navItem(
-                if (entry.status == DownloadManager.STATUS_SUCCESSFUL) "✓" else if (entry.status == DownloadManager.STATUS_FAILED) "!" else "↓",
-                entry.title, statusText
-            ) {
-                when (entry.status) {
-                    DownloadManager.STATUS_SUCCESSFUL -> openDownloadedFile(manager, entry.id)
-                    DownloadManager.STATUS_FAILED -> retryDownload(entry.uri, entry.title, entry.mime)
-                    else -> Toast.makeText(this, statusText, Toast.LENGTH_SHORT).show()
-                }
-            }
-            item.setOnLongClickListener {
-                val actions = mutableListOf<String>()
-                if (entry.status == DownloadManager.STATUS_FAILED || entry.status == DownloadManager.STATUS_PAUSED) actions.add("Повторить загрузку")
-                if (entry.status == DownloadManager.STATUS_SUCCESSFUL) { actions.add("Открыть"); actions.add("Поделиться") }
-                actions.add("Удалить из списка")
-                AlertDialog.Builder(this@MainActivity).setItems(actions.toTypedArray()) { _, which ->
-                    when (actions[which]) {
-                        "Повторить загрузку" -> retryDownload(entry.uri, entry.title, entry.mime)
-                        "Открыть" -> openDownloadedFile(manager, entry.id)
-                        "Поделиться" -> shareDownloadedFile(manager, entry.id)
-                        "Удалить из списка" -> { manager.remove(entry.id); showDownloadsInDrawer() }
+            content.addView(navItem(if (entry.status == DownloadManager.STATUS_SUCCESSFUL) "✓" else "↓",
+                entry.title, statusText) {
+                val uri = manager.getUriForDownloadedFile(entry.id)
+                if (uri != null) {
+                    val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    } catch (_: Exception) {
+                        Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
                     }
-                }.show()
-                true
-            }
-            card.addView(item)
-            if (entry.status == DownloadManager.STATUS_RUNNING || entry.status == DownloadManager.STATUS_PENDING) {
-                card.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                    isIndeterminate = entry.total <= 0
-                    if (entry.total > 0) { max = 100; progress = percent.coerceAtLeast(0) }
-                    progressTintList = android.content.res.ColorStateList.valueOf(accent)
-                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(muted().withAlpha(55))
-                }, LinearLayout.LayoutParams(-1, dp(3)).apply { leftMargin = dp(12); rightMargin = dp(12) })
-            }
-            content.addView(card)
+                } else Toast.makeText(this, "Файл ещё не готов", Toast.LENGTH_SHORT).show()
+            }.apply {
+                setOnLongClickListener {
+                    AlertDialog.Builder(this@MainActivity).setItems(arrayOf("Поделиться", "Удалить")) { _, which ->
+                        if (which == 0) {
+                            val uri = manager.getUriForDownloadedFile(entry.id)
+                            if (uri != null) {
+                                val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
+                                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
+                                    .putExtra(Intent.EXTRA_STREAM, uri)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Поделиться файлом"))
+                            }
+                        } else {
+                            manager.remove(entry.id)
+                            showDownloadsInDrawer()
+                        }
+                    }.show()
+                    true
+                }
+            })
         }
         drawerContent(scroll, content)
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        if (bytes < 1024) return bytes.toString() + " Б"
-        val kb = bytes / 1024.0
-        if (kb < 1024) return String.format(java.util.Locale.getDefault(), "%.1f КБ", kb)
-        val mb = kb / 1024.0
-        if (mb < 1024) return String.format(java.util.Locale.getDefault(), "%.1f МБ", mb)
-        return String.format(java.util.Locale.getDefault(), "%.2f ГБ", mb / 1024.0)
-    }
-
-    private fun openDownloadedFile(manager: DownloadManager, id: Long) {
-        val uri = manager.getUriForDownloadedFile(id) ?: run {
-            Toast.makeText(this, "Файл ещё не готов", Toast.LENGTH_SHORT).show(); return
-        }
-        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-        } catch (_: Exception) {
-            Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun shareDownloadedFile(manager: DownloadManager, id: Long) {
-        val uri = manager.getUriForDownloadedFile(id) ?: return
-        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
-        try {
-            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
-                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Поделиться файлом"))
-        } catch (_: Exception) {
-            Toast.makeText(this, "Не удалось поделиться файлом", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun retryDownload(url: String, title: String, mime: String?) {
-        val uri = runCatching { Uri.parse(url) }.getOrNull()
-        if (uri == null || (uri.scheme != "http" && uri.scheme != "https")) {
-            Toast.makeText(this, "Ссылка для повтора недоступна", Toast.LENGTH_SHORT).show(); return
-        }
-        try {
-            val request = DownloadManager.Request(uri)
-            CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let { request.addRequestHeader("Cookie", it) }
-            request.addRequestHeader("User-Agent", webView.settings.userAgentString)
-            request.setTitle(title)
-            request.setDescription("Повторная загрузка из OmGithub")
-            request.setMimeType(mime ?: "application/octet-stream")
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, title)
-            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-            Toast.makeText(this, "Повторная загрузка началась", Toast.LENGTH_SHORT).show()
-            showDownloadsInDrawer()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Не удалось повторить загрузку: " + (e.localizedMessage ?: "ошибка"), Toast.LENGTH_LONG).show()
-        }
     }
 
     private fun label(value: String) = TextView(this).apply {
@@ -842,17 +763,12 @@ class MainActivity : Activity() {
 
     private fun openExternalLink(uri: Uri) {
         try {
-            val intent = if (uri.scheme.equals("intent", true)) Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, uri)
-            if (intent.resolveActivity(packageManager) != null) startActivity(intent)
-            else {
-                val fallback = intent.getStringExtra("browser_fallback_url")
-                if (!fallback.isNullOrBlank()) webView.loadUrl(fallback)
-                else Toast.makeText(this, "Нет приложения для открытия этой ссылки", Toast.LENGTH_SHORT).show()
-            }
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
         } catch (_: Exception) {
             Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
         }
     }
+
     private fun enqueueDownload(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
         try {
             val uri = Uri.parse(url)
@@ -960,9 +876,13 @@ class MainActivity : Activity() {
           document.head.appendChild(marker);
           ['https://omgithub.com', 'https://github.com'].forEach(function(origin) {
             var dns = document.createElement('link');
-            dns.rel = 'dns-prefetch'; dns.href = origin; document.head.appendChild(dns);
+            dns.rel = 'dns-prefetch';
+            dns.href = origin;
+            document.head.appendChild(dns);
             var pre = document.createElement('link');
-            pre.rel = 'preconnect'; pre.href = origin; pre.crossOrigin = 'anonymous';
+            pre.rel = 'preconnect';
+            pre.href = origin;
+            pre.crossOrigin = 'anonymous';
             document.head.appendChild(pre);
           });
         })();
