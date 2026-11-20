@@ -147,6 +147,11 @@ class MainActivity : Activity() {
             settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
             settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = false
+            settings.displayZoomControls = false
+            settings.setOffscreenPreRaster(prefs.getBoolean("webview_preload", true))
+            setLayerType(if (prefs.getBoolean("webview_hardware", true)) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE, null)
             settings.setSupportMultipleWindows(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = true
@@ -198,6 +203,7 @@ class MainActivity : Activity() {
                     super.onPageFinished(view, url)
                     if (::swipeRefresh.isInitialized) swipeRefresh.isRefreshing = false
                     view.evaluateJavascript(BLOB_DOWNLOAD_SCRIPT, null)
+                    if (prefs.getBoolean("webview_preload", true)) view.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
@@ -315,6 +321,29 @@ class MainActivity : Activity() {
         content.addView(label("ЦВЕТ АКЦЕНТА"))
         content.addView(accentPalette())
 
+        content.addView(sectionTitle("БРАУЗЕР"))
+        content.addView(settingToggle("Аппаратное ускорение WebView", "Использовать GPU для отрисовки страниц", "webview_hardware", true) {
+            webView.setLayerType(if (it) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE, null)
+        })
+        content.addView(settingToggle("Предзагрузка страниц", "Подготовка соединений с OmGithub и GitHub", "webview_preload", true) {
+            if (it) webView.evaluateJavascript(PRELOAD_HINTS_SCRIPT, null)
+        })
+        content.addView(navItem("⌫", "Очистка кэша", "Удалить временные файлы WebView") {
+            webView.clearCache(true)
+            Toast.makeText(this, "Кэш WebView очищен", Toast.LENGTH_SHORT).show()
+        })
+        content.addView(navItem("◉", "Очистка cookies", "Удалить cookies и выйти из аккаунтов") {
+            AlertDialog.Builder(this).setTitle("Очистить cookies?")
+                .setMessage("Вы выйдете из аккаунтов на сайтах. Действие нельзя отменить.")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Очистить") { _, _ ->
+                    CookieManager.getInstance().removeAllCookies {
+                        CookieManager.getInstance().flush()
+                        runOnUiThread { Toast.makeText(this, "Cookies очищены", Toast.LENGTH_SHORT).show() }
+                    }
+                }.show()
+        })
+
         content.addView(View(this), LinearLayout.LayoutParams(1, dp(22)))
         content.addView(View(this).apply {
             setBackgroundColor(muted().withAlpha(65))
@@ -345,6 +374,32 @@ class MainActivity : Activity() {
             })
         })
         drawerContent(scroll, content)
+    }
+
+    private fun settingToggle(title: String, description: String, key: String, defaultValue: Boolean, onChanged: (Boolean) -> Unit = {}): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(9), dp(8), dp(9))
+            setBackgroundColor(if (theme == "oled") Color.BLACK else surface())
+        }
+        val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        copy.addView(TextView(this).apply {
+            text = title; textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(foreground())
+        })
+        copy.addView(TextView(this).apply { text = description; textSize = 11f; setTextColor(muted()) })
+        row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(android.widget.Switch(this).apply {
+            isChecked = prefs.getBoolean(key, defaultValue)
+            setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean(key, checked).apply()
+                onChanged(checked)
+            }
+        })
+        row.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }
+        return row
     }
 
     private fun appVersion(): String = try {
@@ -383,7 +438,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Удалено из избранного", Toast.LENGTH_SHORT).show()
         } else {
             val title = webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty()
-            items.add(0, JSONObject().put("title", title).put("url", url))
+            items.add(0, JSONObject().put("title", title).put("url", url).put("folder", "Основное"))
             saveBookmarks(items)
             Toast.makeText(this, "Добавлено в избранное", Toast.LENGTH_SHORT).show()
         }
@@ -400,30 +455,74 @@ class MainActivity : Activity() {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
         })
+        content.addView(navItem("+", "Новая папка", "Создать папку для закладок") {
+            val input = android.widget.EditText(this).apply { hint = "Название папки" }
+            AlertDialog.Builder(this).setTitle("Новая папка").setView(input)
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Создать") { _, _ ->
+                    val name = input.text.toString().trim()
+                    if (name.isNotEmpty()) {
+                        val folders = (readBookmarks().map { it.optString("folder", "Основное") } + name).distinct()
+                        prefs.edit().putString("bookmark_folders", JSONArray(folders).toString()).apply()
+                        showBookmarksInDrawer()
+                    }
+                }.show()
+        })
         val items = readBookmarks()
+        val savedFolders = runCatching {
+            val a = JSONArray(prefs.getString("bookmark_folders", "[]"))
+            List(a.length()) { a.getString(it) }
+        }.getOrDefault(emptyList())
+        val folderNames = (listOf("Основное") + items.map { it.optString("folder", "Основное") } + savedFolders).distinct()
+        folderNames.forEach { folder ->
+            val folderItems = items.filter { it.optString("folder", "Основное") == folder }
+            content.addView(sectionTitle(folder + " · " + folderItems.size))
+            folderItems.forEach { item ->
+                val url = item.optString("url")
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                row.addView(navItem("★", item.optString("title", url), Uri.parse(url).host ?: url) {
+                    closeDrawer(); webView.loadUrl(url)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                row.addView(TextView(this).apply {
+                    text = "⋮"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(muted())
+                    setOnClickListener {
+                        val updated = readBookmarks()
+                        val target = updated.firstOrNull { it.optString("url") == url } ?: return@setOnClickListener
+                        AlertDialog.Builder(this@MainActivity)
+                            .setItems(arrayOf("Переименовать", "Переместить в папку", "Удалить")) { _, choice ->
+                                when (choice) {
+                                    0 -> {
+                                        val edit = android.widget.EditText(this@MainActivity).apply { setText(target.optString("title")) }
+                                        AlertDialog.Builder(this@MainActivity).setTitle("Название закладки").setView(edit)
+                                            .setNegativeButton("Отмена", null)
+                                            .setPositiveButton("Сохранить") { _, _ ->
+                                                target.put("title", edit.text.toString().trim().ifBlank { url })
+                                                saveBookmarks(updated); showBookmarksInDrawer()
+                                            }.show()
+                                    }
+                                    1 -> AlertDialog.Builder(this@MainActivity).setTitle("Папка")
+                                        .setItems(folderNames.toTypedArray()) { _, index ->
+                                            target.put("folder", folderNames[index]); saveBookmarks(updated); showBookmarksInDrawer()
+                                        }.show()
+                                    2 -> {
+                                        updated.removeAll { it.optString("url") == url }
+                                        saveBookmarks(updated); showBookmarksInDrawer()
+                                    }
+                                }
+                            }.show()
+                    }
+                }, LinearLayout.LayoutParams(dp(40), dp(54)))
+                content.addView(row)
+            }
+        }
         if (items.isEmpty()) content.addView(TextView(this).apply {
             text = "Здесь будут сохранённые страницы. Добавляйте их через пункт «Добавить в избранное»."
             textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
         })
-        items.forEach { item ->
-            val url = item.optString("url")
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            row.addView(navItem("★", item.optString("title", url), Uri.parse(url).host ?: url) {
-                closeDrawer(); webView.loadUrl(url)
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(TextView(this).apply {
-                text = "×"; textSize = 22f; gravity = Gravity.CENTER; setTextColor(muted())
-                setOnClickListener {
-                    val updated = readBookmarks()
-                    updated.removeAll { it.optString("url") == url }
-                    saveBookmarks(updated)
-                    showBookmarksInDrawer()
-                }
-            }, LinearLayout.LayoutParams(dp(40), dp(54)))
-            content.addView(row)
-        }
         if (items.isNotEmpty()) content.addView(navItem("⌫", "Очистить избранное", "Удалить все сохранённые страницы") {
-            saveBookmarks(emptyList()); showBookmarksInDrawer()
+            AlertDialog.Builder(this).setMessage("Удалить все закладки?")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Удалить") { _, _ -> saveBookmarks(emptyList()); showBookmarksInDrawer() }.show()
         })
         drawerContent(scroll, content)
     }
@@ -781,6 +880,22 @@ class MainActivity : Activity() {
         }
         super.onDestroy()
     }
+    private val PRELOAD_HINTS_SCRIPT = """
+        (function() {
+          if (!document.head || document.getElementById('omgithub-preload-hints')) return;
+          var marker = document.createElement('meta');
+          marker.id = 'omgithub-preload-hints';
+          document.head.appendChild(marker);
+          ['https://omgithub.com', 'https://github.com'].forEach(function(origin) {
+            var dns = document.createElement('link');
+            dns.rel = 'dns-prefetch'; dns.href = origin; document.head.appendChild(dns);
+            var pre = document.createElement('link');
+            pre.rel = 'preconnect'; pre.href = origin; pre.crossOrigin = 'anonymous';
+            document.head.appendChild(pre);
+          });
+        })();
+    """.trimIndent()
+
     private val BLOB_DOWNLOAD_SCRIPT = """
         (function() {
           if (window.__omGithubBlobHook) return;
