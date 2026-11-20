@@ -530,77 +530,144 @@ class MainActivity : Activity() {
     private fun showDownloadsInDrawer() {
         val scroll = drawer.getChildAt(0) as? ScrollView ?: return
         val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        val cursor = manager.query(DownloadManager.Query().setFilterByStatus(
-            DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or
-                DownloadManager.STATUS_PAUSED or DownloadManager.STATUS_SUCCESSFUL or DownloadManager.STATUS_FAILED
-        ))
-        data class DownloadEntry(val id: Long, val title: String, val status: Int, val progress: String)
+        data class DownloadEntry(val id: Long, val title: String, val status: Int, val done: Long, val total: Long, val uri: String, val reason: Int, val mime: String?)
         val entries = mutableListOf<DownloadEntry>()
-        cursor?.use {
-            val idCol = it.getColumnIndex(DownloadManager.COLUMN_ID)
-            val titleCol = it.getColumnIndex(DownloadManager.COLUMN_TITLE)
-            val statusCol = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            val doneCol = it.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            val totalCol = it.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-            while (it.moveToNext()) {
-                val status = it.getInt(statusCol)
-                val done = if (doneCol >= 0) it.getLong(doneCol) else 0L
-                val total = if (totalCol >= 0) it.getLong(totalCol) else -1L
-                val progress = if (total > 0) "${((done * 100) / total).coerceIn(0, 100)}%" else ""
-                entries.add(DownloadEntry(it.getLong(idCol), it.getString(titleCol) ?: "Файл", status, progress))
-            }
+        manager.query(DownloadManager.Query()).use { cursor ->
+            val idCol = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
+            val titleCol = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val doneCol = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+            val totalCol = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+            val uriCol = cursor.getColumnIndex(DownloadManager.COLUMN_URI)
+            val reasonCol = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+            val mimeCol = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+            while (cursor.moveToNext()) entries.add(DownloadEntry(
+                cursor.getLong(idCol),
+                if (titleCol >= 0) cursor.getString(titleCol) ?: "Файл" else "Файл",
+                cursor.getInt(statusCol),
+                if (doneCol >= 0) cursor.getLong(doneCol) else 0L,
+                if (totalCol >= 0) cursor.getLong(totalCol) else -1L,
+                if (uriCol >= 0) cursor.getString(uriCol).orEmpty() else "",
+                if (reasonCol >= 0) cursor.getInt(reasonCol) else 0,
+                if (mimeCol >= 0) cursor.getString(mimeCol) else null
+            ))
         }
+        entries.reverse()
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         content.addView(navItem("‹", "Назад", "Главное меню") { drawerContent(scroll, mainDrawerContent()) })
         content.addView(TextView(this).apply {
             text = "Скачанные файлы"; textSize = 25f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(12))
+            setTextColor(foreground()); setPadding(dp(4), dp(16), dp(4), dp(8))
         })
+        content.addView(navItem("↻", "Обновить список", entries.size.toString() + " загрузок") { showDownloadsInDrawer() })
         if (entries.isEmpty()) content.addView(TextView(this).apply {
             text = "Пока нет загрузок. Скачанные файлы появятся здесь."
             textSize = 14f; setTextColor(muted()); setPadding(dp(5), dp(12), dp(5), dp(12))
         })
         entries.forEach { entry ->
+            val percent = if (entry.total > 0) ((entry.done * 100) / entry.total).toInt().coerceIn(0, 100) else -1
+            val sizeText = if (entry.total > 0) formatBytes(entry.done) + " / " + formatBytes(entry.total) + " · " + percent + "%"
+                else if (entry.done > 0) formatBytes(entry.done) else ""
             val statusText = when (entry.status) {
-                DownloadManager.STATUS_SUCCESSFUL -> "Готово · нажмите, чтобы открыть"
-                DownloadManager.STATUS_FAILED -> "Ошибка загрузки"
-                DownloadManager.STATUS_PAUSED -> "Приостановлено"
-                else -> "Загрузка · ${entry.progress}"
+                DownloadManager.STATUS_SUCCESSFUL -> "Готово · " + sizeText
+                DownloadManager.STATUS_FAILED -> "Ошибка · код " + entry.reason
+                DownloadManager.STATUS_PAUSED -> "Приостановлено · " + entry.reason
+                DownloadManager.STATUS_PENDING -> "Ожидание · " + sizeText
+                else -> "Загрузка · " + sizeText
             }
-            content.addView(navItem(if (entry.status == DownloadManager.STATUS_SUCCESSFUL) "✓" else "↓",
-                entry.title, statusText) {
-                val uri = manager.getUriForDownloadedFile(entry.id)
-                if (uri != null) {
-                    val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                    } catch (_: Exception) {
-                        Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
-                    }
-                } else Toast.makeText(this, "Файл ещё не готов", Toast.LENGTH_SHORT).show()
-            }.apply {
-                setOnLongClickListener {
-                    AlertDialog.Builder(this@MainActivity).setItems(arrayOf("Поделиться", "Удалить")) { _, which ->
-                        if (which == 0) {
-                            val uri = manager.getUriForDownloadedFile(entry.id)
-                            if (uri != null) {
-                                val mime = manager.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
-                                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
-                                    .putExtra(Intent.EXTRA_STREAM, uri)
-                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Поделиться файлом"))
-                            }
-                        } else {
-                            manager.remove(entry.id)
-                            showDownloadsInDrawer()
-                        }
-                    }.show()
-                    true
+            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(4), dp(8), dp(8)) }
+            val item = navItem(
+                if (entry.status == DownloadManager.STATUS_SUCCESSFUL) "✓" else if (entry.status == DownloadManager.STATUS_FAILED) "!" else "↓",
+                entry.title, statusText
+            ) {
+                when (entry.status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> openDownloadedFile(manager, entry.id)
+                    DownloadManager.STATUS_FAILED -> retryDownload(entry.uri, entry.title, entry.mime)
+                    else -> Toast.makeText(this, statusText, Toast.LENGTH_SHORT).show()
                 }
-            })
+            }
+            item.setOnLongClickListener {
+                val actions = mutableListOf<String>()
+                if (entry.status == DownloadManager.STATUS_FAILED || entry.status == DownloadManager.STATUS_PAUSED) actions.add("Повторить загрузку")
+                if (entry.status == DownloadManager.STATUS_SUCCESSFUL) { actions.add("Открыть"); actions.add("Поделиться") }
+                actions.add("Удалить из списка")
+                AlertDialog.Builder(this@MainActivity).setItems(actions.toTypedArray()) { _, which ->
+                    when (actions[which]) {
+                        "Повторить загрузку" -> retryDownload(entry.uri, entry.title, entry.mime)
+                        "Открыть" -> openDownloadedFile(manager, entry.id)
+                        "Поделиться" -> shareDownloadedFile(manager, entry.id)
+                        "Удалить из списка" -> { manager.remove(entry.id); showDownloadsInDrawer() }
+                    }
+                }.show()
+                true
+            }
+            card.addView(item)
+            if (entry.status == DownloadManager.STATUS_RUNNING || entry.status == DownloadManager.STATUS_PENDING) {
+                card.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    isIndeterminate = entry.total <= 0
+                    if (entry.total > 0) { max = 100; progress = percent.coerceAtLeast(0) }
+                    progressTintList = android.content.res.ColorStateList.valueOf(accent)
+                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(muted().withAlpha(55))
+                }, LinearLayout.LayoutParams(-1, dp(3)).apply { leftMargin = dp(12); rightMargin = dp(12) })
+            }
+            content.addView(card)
         }
         drawerContent(scroll, content)
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return bytes.toString() + " Б"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format(java.util.Locale.getDefault(), "%.1f КБ", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format(java.util.Locale.getDefault(), "%.1f МБ", mb)
+        return String.format(java.util.Locale.getDefault(), "%.2f ГБ", mb / 1024.0)
+    }
+
+    private fun openDownloadedFile(manager: DownloadManager, id: Long) {
+        val uri = manager.getUriForDownloadedFile(id) ?: run {
+            Toast.makeText(this, "Файл ещё не готов", Toast.LENGTH_SHORT).show(); return
+        }
+        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Не найдено приложение для открытия файла", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun shareDownloadedFile(manager: DownloadManager, id: Long) {
+        val uri = manager.getUriForDownloadedFile(id) ?: return
+        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "*/*"
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
+                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Поделиться файлом"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Не удалось поделиться файлом", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun retryDownload(url: String, title: String, mime: String?) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri == null || (uri.scheme != "http" && uri.scheme != "https")) {
+            Toast.makeText(this, "Ссылка для повтора недоступна", Toast.LENGTH_SHORT).show(); return
+        }
+        try {
+            val request = DownloadManager.Request(uri)
+            CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let { request.addRequestHeader("Cookie", it) }
+            request.addRequestHeader("User-Agent", webView.settings.userAgentString)
+            request.setTitle(title)
+            request.setDescription("Повторная загрузка из OmGithub")
+            request.setMimeType(mime ?: "application/octet-stream")
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, title)
+            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+            Toast.makeText(this, "Повторная загрузка началась", Toast.LENGTH_SHORT).show()
+            showDownloadsInDrawer()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Не удалось повторить загрузку: " + (e.localizedMessage ?: "ошибка"), Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun label(value: String) = TextView(this).apply {
