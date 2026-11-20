@@ -9,8 +9,8 @@ android {
         applicationId = "com.sargarus.omgithub"
         minSdk = 23
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.1.1"
+        versionCode = 8
+        versionName = "1.2"
     }
     signingConfigs {
         create("stable") {
